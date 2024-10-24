@@ -14,6 +14,7 @@
 
 package com.starrocks.statistic;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -303,6 +304,12 @@ public class StatisticExecutor {
         return executeStatisticDQL(context, sql);
     }
 
+    public List<TStatisticData> queryPartitionLevelColumnNDV(ConnectContext context, long tableId,
+                                                             List<Long> partitions, List<String> columns) {
+        String sql = StatisticSQLBuilder.buildQueryPartitionStatisticsSQL(tableId, partitions, columns);
+        return executeStatisticDQL(context, sql);
+    }
+
     private static List<TStatisticData> deserializerStatisticData(List<TResultBatch> sqlResult) throws TException {
         List<TStatisticData> statistics = Lists.newArrayList();
 
@@ -315,15 +322,7 @@ public class StatisticExecutor {
             return statistics;
         }
 
-        if (version == StatsConstants.STATISTIC_DATA_VERSION
-                || version == StatsConstants.STATISTIC_DICT_VERSION
-                || version == StatsConstants.STATISTIC_HISTOGRAM_VERSION
-                || version == StatsConstants.STATISTIC_TABLE_VERSION
-                || version == StatsConstants.STATISTIC_BATCH_VERSION
-                || version == StatsConstants.STATISTIC_EXTERNAL_VERSION
-                || version == StatsConstants.STATISTIC_EXTERNAL_QUERY_VERSION
-                || version == StatsConstants.STATISTIC_EXTERNAL_HISTOGRAM_VERSION
-                || version == StatsConstants.STATISTIC_EXTERNAL_QUERY_V2_VERSION) {
+        if (StatsConstants.STATISTIC_SUPPORTED_VERSION.contains(version)) {
             TDeserializer deserializer = new TDeserializer(new TCompactProtocol.Factory());
             for (TResultBatch resultBatch : sqlResult) {
                 for (ByteBuffer bb : resultBatch.rows) {
@@ -426,9 +425,23 @@ public class StatisticExecutor {
                         refreshAsync);
             } else {
                 // for external table
-                ExternalBasicStatsMeta externalBasicStatsMeta = new ExternalBasicStatsMeta(statsJob.getCatalogName(),
-                        db.getFullName(), table.getName(), statsJob.getColumnNames(), statsJob.getType(),
-                        analyzeStatus.getStartTime(), statsJob.getProperties());
+                ExternalBasicStatsMeta externalBasicStatsMeta = analyzeMgr.getExternalTableBasicStatsMeta(
+                        statsJob.getCatalogName(), db.getFullName(), table.getName());
+                if (externalBasicStatsMeta == null) {
+                    externalBasicStatsMeta = new ExternalBasicStatsMeta(statsJob.getCatalogName(), db.getFullName(),
+                            table.getName(), Lists.newArrayList(statsJob.getColumnNames()), statsJob.getType(),
+                            analyzeStatus.getEndTime(), statsJob.getProperties());
+                } else {
+                    externalBasicStatsMeta = externalBasicStatsMeta.clone();
+                    externalBasicStatsMeta.setUpdateTime(analyzeStatus.getEndTime());
+                    externalBasicStatsMeta.setProperties(statsJob.getProperties());
+                    externalBasicStatsMeta.setAnalyzeType(statsJob.getType());
+                }
+                for (String column : ListUtils.emptyIfNull(statsJob.getColumnNames())) {
+                    ColumnStatsMeta meta =
+                            new ColumnStatsMeta(column, statsJob.getType(), analyzeStatus.getEndTime());
+                    externalBasicStatsMeta.addColumnStatsMeta(meta);
+                }
                 GlobalStateMgr.getCurrentState().getAnalyzeMgr().addExternalBasicStatsMeta(externalBasicStatsMeta);
                 GlobalStateMgr.getCurrentState().getAnalyzeMgr()
                         .refreshConnectorTableBasicStatisticsCache(statsJob.getCatalogName(),
@@ -445,6 +458,35 @@ public class StatisticExecutor {
         } catch (TException e) {
             throw new SemanticException(e.getMessage());
         }
+    }
+
+    /**
+     * In case of INSERT-OVERWRITE, the partition-id would change but the statistics would not. So we need to update
+     * the partition id of the statistics. Since PRIMARY-KEY tables doesn't really support update key columns, we
+     * choose to copy existing row but change the id of it,  then delete existing row.
+     * If the second step failed before finish, the statistics cleanup procedure will handle it.
+     */
+    public static void overwritePartitionStatistics(ConnectContext context,
+                                                    long dbId,
+                                                    long tableId,
+                                                    long sourcePartition,
+                                                    long targetPartition) {
+        List<String> sqlList =
+                FullStatisticsCollectJob.buildOverwritePartitionSQL(tableId, sourcePartition, targetPartition);
+        Preconditions.checkState(sqlList.size() == 2);
+
+        // copy
+        executeDML(context, sqlList.get(0));
+
+        // delete
+        executeDML(context, sqlList.get(1));
+
+        // NOTE: why don't we refresh the statistics cache ?
+        // OVERWRITE will create a new partition and delete the existing one, so next time when consulting the stats
+        // cache, it would get a cache-miss so reload the cache. and also the cache of deleted partition would be
+        // vacuumed by background job. so to conclude we don't need to refresh the stats cache manually
+        GlobalStateMgr.getCurrentState().getStatisticStorage().overwritePartitionStatistics(
+                tableId, sourcePartition, targetPartition);
     }
 
     private List<TResultBatch> executeDQL(ConnectContext context, String sql) {
@@ -468,7 +510,7 @@ public class StatisticExecutor {
         }
     }
 
-    private boolean executeDML(ConnectContext context, String sql) {
+    private static boolean executeDML(ConnectContext context, String sql) {
         StatementBase parsedStmt;
         try {
             parsedStmt = SqlParser.parseOneWithStarRocksDialect(sql, context.getSessionVariable());

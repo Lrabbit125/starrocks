@@ -1985,7 +1985,11 @@ public class SchemaChangeHandler extends AlterHandler {
         }
 
         // set table state
-        olapTable.setState(OlapTableState.SCHEMA_CHANGE);
+        if (schemaChangeJob.getType() == AlterJobV2.JobType.OPTIMIZE) {
+            olapTable.setState(OlapTableState.OPTIMIZE);
+        } else {
+            olapTable.setState(OlapTableState.SCHEMA_CHANGE);
+        }
 
         // 2. add schemaChangeJob
         addAlterJobV2(schemaChangeJob);
@@ -2103,6 +2107,12 @@ public class SchemaChangeHandler extends AlterHandler {
         } else if (metaType == TTabletMetaType.ENABLE_LOAD_PROFILE) {
             boolean enableLoadProfile = Boolean.parseBoolean(properties.get(PropertyAnalyzer.PROPERTIES_ENABLE_LOAD_PROFILE));
             if (enableLoadProfile == olapTable.enableLoadProfile()) {
+                return;
+            }
+        } else if (metaType == TTabletMetaType.BASE_COMPACTION_FORBIDDEN_TIME_RANGES) {
+            String baseCompactionForbiddenTimeRanges = properties.get(
+                    PropertyAnalyzer.PROPERTIES_BASE_COMPACTION_FORBIDDEN_TIME_RANGES);
+            if (baseCompactionForbiddenTimeRanges.equals(olapTable.getBaseCompactionForbiddenTimeRanges())) {
                 return;
             }
         } else if (metaType == TTabletMetaType.PRIMARY_INDEX_CACHE_EXPIRE_SEC) {

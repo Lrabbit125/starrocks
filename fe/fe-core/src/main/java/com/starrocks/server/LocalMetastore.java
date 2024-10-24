@@ -1664,6 +1664,7 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
                     + "(" + db.getId() + ") has been dropped");
         }
         try {
+            olapTable = checkTable(db, table.getId());
             // check if meta changed
             checkIfMetaChange(olapTable, copiedTable, table.getName());
 
@@ -3774,7 +3775,7 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
         tableProperty.buildEnablePersistentIndex();
 
         if (table.isCloudNativeTable()) {
-            // now default to LOCAL
+            // now default to CLOUD_NATIVE
             tableProperty.buildPersistentIndexType();
         }
 
@@ -3935,6 +3936,23 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
         GlobalStateMgr.getCurrentState().getEditLog().logModifyEnableLoadProfile(info);
     }
 
+    public void modifyTableBaseCompactionForbiddenTimeRanges(Database db, OlapTable table, Map<String, String> properties) {
+        Locker locker = new Locker();
+        Preconditions.checkArgument(locker.isDbWriteLockHeldByCurrentThread(db));
+        TableProperty tableProperty = table.getTableProperty();
+        if (tableProperty == null) {
+            tableProperty = new TableProperty(properties);
+            table.setTableProperty(tableProperty);
+        } else {
+            tableProperty.modifyTableProperties(properties);
+        }
+        tableProperty.buildBaseCompactionForbiddenTimeRanges();
+
+        ModifyTablePropertyOperationLog info = new ModifyTablePropertyOperationLog(db.getId(), table.getId(),
+                properties);
+        GlobalStateMgr.getCurrentState().getEditLog().logModifyBaseCompactionForbiddenTimeRanges(info);
+    }
+
     public void modifyTablePrimaryIndexCacheExpireSec(Database db, OlapTable table, Map<String, String> properties) {
         Locker locker = new Locker();
         Preconditions.checkArgument(locker.isDbWriteLockHeldByCurrentThread(db));
@@ -3966,6 +3984,8 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
             modifyTableAutomaticBucketSize(db, table, properties);
         } else if (metaType == TTabletMetaType.MUTABLE_BUCKET_NUM) {
             modifyTableMutableBucketNum(db, table, properties);
+        } else if (metaType == TTabletMetaType.BASE_COMPACTION_FORBIDDEN_TIME_RANGES) {
+            modifyTableBaseCompactionForbiddenTimeRanges(db, table, properties);
         } else if (metaType == TTabletMetaType.PRIMARY_INDEX_CACHE_EXPIRE_SEC) {
             modifyTablePrimaryIndexCacheExpireSec(db, table, properties);
         } else if (metaType == TTabletMetaType.ENABLE_LOAD_PROFILE) {
@@ -4727,10 +4747,12 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
     public void onErasePartition(Partition partition) {
         // remove tablet in inverted index
         TabletInvertedIndex invertedIndex = GlobalStateMgr.getCurrentState().getTabletInvertedIndex();
-        for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
-            for (Tablet tablet : index.getTablets()) {
-                long tabletId = tablet.getId();
-                invertedIndex.deleteTablet(tabletId);
+        for (PhysicalPartition subPartition : partition.getSubPartitions()) {
+            for (MaterializedIndex index : subPartition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+                for (Tablet tablet : index.getTablets()) {
+                    long tabletId = tablet.getId();
+                    invertedIndex.deleteTablet(tabletId);
+                }
             }
         }
     }
@@ -4754,11 +4776,10 @@ public class LocalMetastore implements ConnectorMetadata, MVRepairHandler, Memor
         Locker locker = new Locker();
         locker.lockDatabase(db.getId(), LockType.READ);
         try {
-            if (olapTable.getState() != OlapTable.OlapTableState.NORMAL) {
-                if (!isOptimize || olapTable.getState() != OlapTable.OlapTableState.SCHEMA_CHANGE) {
-                    throw new RuntimeException("Table' state is not NORMAL: " + olapTable.getState()
-                            + ", tableId:" + olapTable.getId() + ", tabletName:" + olapTable.getName());
-                }
+            if (olapTable.getState() != OlapTable.OlapTableState.NORMAL
+                    && olapTable.getState() != OlapTable.OlapTableState.OPTIMIZE) {
+                throw new RuntimeException("Table' state is not NORMAL: " + olapTable.getState()
+                        + ", tableId:" + olapTable.getId() + ", tabletName:" + olapTable.getName());
             }
             for (Long id : sourcePartitionIds) {
                 origPartitions.put(id, olapTable.getPartition(id).getName());

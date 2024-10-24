@@ -312,7 +312,7 @@ public class Config extends ConfigBase {
      * In such cases, it is possible to disable this switch.
      */
     @ConfField(mutable = true)
-    public static boolean log_register_and_unregister_query_id = true;
+    public static boolean log_register_and_unregister_query_id = false;
 
     /**
      * Used to limit the maximum number of partitions that can be created when creating a dynamic partition table,
@@ -2054,6 +2054,9 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true)
     public static long statistic_auto_collect_small_table_interval = 0; // unit: second, default 0
 
+    @ConfField(mutable = true, comment = "The interval of auto collecting histogram statistics")
+    public static long statistic_auto_collect_histogram_interval = 3600L * 1; // 1h
+
     @ConfField(mutable = true)
     public static long statistic_auto_collect_large_table_interval = 3600L * 12; // unit: second, default 12h
 
@@ -2074,6 +2077,10 @@ public class Config extends ConfigBase {
      */
     @ConfField(mutable = true)
     public static long statistic_sample_collect_rows = 200000;
+
+    @ConfField(mutable = true, comment = "If changed ratio of a table/partition is larger than this threshold, " +
+            "we would use sample statistics instead of full statistics")
+    public static double statistic_sample_collect_ratio_threshold_of_first_load = 0.1;
 
     /**
      * default bucket size of histogram statistics
@@ -2103,10 +2110,10 @@ public class Config extends ConfigBase {
     public static long connector_table_query_trigger_analyze_small_table_rows = 10000000; // 10M
 
     @ConfField(mutable = true)
-    public static long connector_table_query_trigger_analyze_small_table_interval = 6 * 60 * 60; // unit: second, default 6h
+    public static long connector_table_query_trigger_analyze_small_table_interval = 2 * 3600; // unit: second, default 2h
 
     @ConfField(mutable = true)
-    public static long connector_table_query_trigger_analyze_large_table_interval = 24 * 60 * 60; // unit: second, default 24h
+    public static long connector_table_query_trigger_analyze_large_table_interval = 12 * 3600; // unit: second, default 12h
 
     @ConfField(mutable = true)
     public static int connector_table_query_trigger_analyze_max_running_task_num = 2;
@@ -2690,6 +2697,12 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true)
     public static int lake_compaction_history_size = 20;
 
+    @ConfField(mutable = true)
+    public static String lake_compaction_warehouse = "default_warehouse";
+
+    @ConfField(mutable = true)
+    public static String lake_background_warehouse = "default_warehouse";
+
     // e.g. "tableId1;tableId2"
     @ConfField(mutable = true)
     public static String lake_compaction_disable_tables = "";
@@ -2985,6 +2998,12 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true)
     public static boolean enable_persistent_index_by_default = true;
 
+    /*
+     * Using cloud native persistent index in primary key table by default when creating table.
+     */
+    @ConfField(mutable = true)
+    public static boolean enable_cloud_native_persistent_index_by_default = true;
+
     /**
      * timeout for external table commit
      */
@@ -3177,7 +3196,7 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true)
     public static int replication_max_parallel_data_size_mb = 1048576; // 1T
     @ConfField(mutable = true)
-    public static int replication_transaction_timeout_sec = 1 * 60 * 60; // 1hour
+    public static int replication_transaction_timeout_sec = 24 * 60 * 60; // 24hour
     @ConfField(mutable = true)
     public static boolean enable_legacy_compatibility_for_replication = false;
 
@@ -3255,4 +3274,10 @@ public class Config extends ConfigBase {
     // whether to print sql before parser
     @ConfField(mutable = true)
     public static boolean enable_print_sql = false;
+
+    @ConfField(mutable = false)
+    public static int lake_remove_partition_thread_num = 8;
+
+    @ConfField(mutable = false)
+    public static int lake_remove_table_thread_num = 4;
 }

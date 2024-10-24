@@ -56,8 +56,6 @@ import com.starrocks.common.ErrorReport;
 import com.starrocks.common.Pair;
 import com.starrocks.common.profile.Timer;
 import com.starrocks.common.profile.Tracers;
-import com.starrocks.common.util.concurrent.lock.LockType;
-import com.starrocks.common.util.concurrent.lock.Locker;
 import com.starrocks.privilege.SecurityPolicyRewriteRule;
 import com.starrocks.qe.ConnectContext;
 import com.starrocks.server.GlobalStateMgr;
@@ -196,19 +194,23 @@ public class QueryAnalyzer {
             }
 
             // 3. analyze generated column expression based on current scope
+            Map<Expr, SlotRef> analyzedGeneratedExprToColumnRef = new HashMap<>();
             for (Map.Entry<Expr, SlotRef> entry : generatedExprToColumnRef.entrySet()) {
                 entry.getKey().reset();
                 entry.getValue().reset();
-                
+
                 try {
                     ExpressionAnalyzer.analyzeExpression(entry.getKey(), new AnalyzeState(), scope, session);
                     ExpressionAnalyzer.analyzeExpression(entry.getValue(), new AnalyzeState(), scope, session);
                 } catch (Exception ignore) {
-                    // ignore generated column rewrite if hit any exception
-                    generatedExprToColumnRef.clear();
+                    // skip this generated column rewrite if hit any exception
+                    // some exception is reasonable because some of illegal generated column
+                    // rewrite will be rejected by ananlyzer exception.
+                    continue;
                 }
+                analyzedGeneratedExprToColumnRef.put(entry.getKey(), entry.getValue());
             }
-            resultGeneratedExprToColumnRef.putAll(generatedExprToColumnRef);
+            resultGeneratedExprToColumnRef.putAll(analyzedGeneratedExprToColumnRef);
         }
 
         @Override
@@ -1393,7 +1395,6 @@ public class QueryAnalyzer {
             }
 
             MetaUtils.checkDbNullAndReport(db, dbName);
-            Locker locker = new Locker();
 
             Table table = null;
             if (tableRelation.isSyncMVQuery()) {
@@ -1404,17 +1405,12 @@ public class QueryAnalyzer {
                         Table mvTable = materializedIndex.first;
                         Preconditions.checkState(mvTable != null);
                         Preconditions.checkState(mvTable instanceof OlapTable);
-                        try {
-                            // Add read lock to avoid concurrent problems.
-                            locker.lockDatabase(db.getId(), LockType.READ);
-                            OlapTable mvOlapTable = new OlapTable();
-                            ((OlapTable) mvTable).copyOnlyForQuery(mvOlapTable);
-                            // Copy the necessary olap table meta to avoid changing original meta;
-                            mvOlapTable.setBaseIndexId(materializedIndex.second.getIndexId());
-                            table = mvOlapTable;
-                        } finally {
-                            locker.unLockDatabase(db.getId(), LockType.READ);
-                        }
+                        // Add read lock to avoid concurrent problems.
+                        OlapTable mvOlapTable = new OlapTable();
+                        ((OlapTable) mvTable).copyOnlyForQuery(mvOlapTable);
+                        // Copy the necessary olap table meta to avoid changing original meta;
+                        mvOlapTable.setBaseIndexId(materializedIndex.second.getIndexId());
+                        table = mvOlapTable;
                     }
                 }
             } else {
