@@ -1157,9 +1157,12 @@ public:
         if (capacity_ > 127) {
             destroy_slots();
         } else if (capacity_) {
-            for (size_t i = 0; i != capacity_; ++i) {
-                if (IsFull(ctrl_[i])) {
-                    PolicyTraits::destroy(&alloc_ref(), slots_ + i);
+            PHMAP_IF_CONSTEXPR((!std::is_trivially_destructible<typename PolicyTraits::value_type>::value ||
+                                std::is_same<typename Policy::is_flat, std::false_type>::value)) {
+                for (size_t i = 0; i != capacity_; ++i) {
+                    if (IsFull(ctrl_[i])) {
+                        PolicyTraits::destroy(&alloc_ref(), slots_ + i);
+                    }
                 }
             }
             size_ = 0;
@@ -1837,9 +1840,12 @@ private:
 
     void destroy_slots() {
         if (!capacity_) return;
-        for (size_t i = 0; i != capacity_; ++i) {
-            if (IsFull(ctrl_[i])) {
-                PolicyTraits::destroy(&alloc_ref(), slots_ + i);
+        PHMAP_IF_CONSTEXPR((!std::is_trivially_destructible<typename PolicyTraits::value_type>::value ||
+                            std::is_same<typename Policy::is_flat, std::false_type>::value)) {
+            for (size_t i = 0; i != capacity_; ++i) {
+                if (IsFull(ctrl_[i])) {
+                    PolicyTraits::destroy(&alloc_ref(), slots_ + i);
+                }
             }
         }
         auto layout = MakeLayout(capacity_);
@@ -2935,6 +2941,51 @@ public:
         return std::get<2>(res);
     }
 
+    // Extension API: support iterating over all values
+    //
+    // flat_hash_set<std::string> s;
+    // s.insert(...);
+    // s.for_each([](auto const & key) {
+    //    // Safely iterates over all the keys
+    // });
+    template <class F>
+    void for_each(F&& fCallback) const {
+        for (auto const& inner : sets_) {
+            typename Lockable::SharedLock m(const_cast<Inner&>(inner));
+            std::for_each(inner.set_.begin(), inner.set_.end(), fCallback);
+        }
+    }
+
+    // this version allows to modify the values
+    template <class F>
+    void for_each_m(F&& fCallback) {
+        for (auto& inner : sets_) {
+            typename Lockable::UniqueLock m(inner);
+            std::for_each(inner.set_.begin(), inner.set_.end(), fCallback);
+        }
+    }
+
+    // Extension API: access internal submaps by index
+    // under lock protection
+    // ex: m.with_submap(i, [&](const Map::EmbeddedSet& set) {
+    //        for (auto& p : set) { ...; }});
+    // -------------------------------------------------
+    template <class F>
+    void with_submap(size_t idx, F&& fCallback) const {
+        const Inner& inner = sets_[idx];
+        const auto& set = inner.set_;
+        typename Lockable::SharedLock m(const_cast<Inner&>(inner));
+        fCallback(set);
+    }
+
+    template <class F>
+    void with_submap_m(size_t idx, F&& fCallback) {
+        Inner& inner = sets_[idx];
+        auto& set = inner.set_;
+        typename Lockable::UniqueLock m(const_cast<Inner&>(inner));
+        fCallback(set);
+    }
+
     // Extension API: support for heterogeneous keys.
     //
     //   std::unordered_set<std::string> s;
@@ -3745,6 +3796,7 @@ struct FlatHashSetPolicy {
     using key_type = T;
     using init_type = T;
     using constant_iterators = std::true_type;
+    using is_flat = std::true_type;
 
     template <class Allocator, class... Args>
     static void construct(Allocator* alloc, slot_type* slot, Args&&... args) {
@@ -3782,6 +3834,7 @@ struct FlatHashMapPolicy {
     using key_type = K;
     using mapped_type = V;
     using init_type = std::pair</*non const*/ key_type, mapped_type>;
+    using is_flat = std::true_type;
 
     template <class Allocator, class... Args>
     static void construct(Allocator* alloc, slot_type* slot, Args&&... args) {
@@ -3858,6 +3911,7 @@ struct NodeHashSetPolicy : phmap::priv::node_hash_policy<T&, NodeHashSetPolicy<T
     using key_type = T;
     using init_type = T;
     using constant_iterators = std::true_type;
+    using is_flat = std::false_type;
 
     template <class Allocator, class... Args>
     static T* new_element(Allocator* alloc, Args&&... args) {
@@ -3896,6 +3950,7 @@ public:
     using key_type = Key;
     using mapped_type = Value;
     using init_type = std::pair</*non const*/ key_type, mapped_type>;
+    using is_flat = std::false_type;
 
     template <class Allocator, class... Args>
     static value_type* new_element(Allocator* alloc, Args&&... args) {

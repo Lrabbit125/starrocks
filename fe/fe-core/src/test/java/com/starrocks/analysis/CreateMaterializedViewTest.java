@@ -14,12 +14,14 @@
 
 package com.starrocks.analysis;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.starrocks.catalog.BaseTableInfo;
 import com.starrocks.catalog.ColocateTableIndex;
 import com.starrocks.catalog.Column;
 import com.starrocks.catalog.Database;
+import com.starrocks.catalog.DeltaLakeTable;
 import com.starrocks.catalog.ExpressionRangePartitionInfo;
 import com.starrocks.catalog.InternalCatalog;
 import com.starrocks.catalog.KeysType;
@@ -32,12 +34,13 @@ import com.starrocks.catalog.SinglePartitionInfo;
 import com.starrocks.catalog.Table;
 import com.starrocks.catalog.TableProperty;
 import com.starrocks.catalog.Tablet;
+import com.starrocks.catalog.mv.MVPlanValidationResult;
 import com.starrocks.common.AnalysisException;
 import com.starrocks.common.Config;
 import com.starrocks.common.DdlException;
-import com.starrocks.common.Pair;
 import com.starrocks.common.util.DateUtils;
 import com.starrocks.common.util.PropertyAnalyzer;
+import com.starrocks.common.util.ThreadUtil;
 import com.starrocks.persist.CreateTableInfo;
 import com.starrocks.persist.OperationType;
 import com.starrocks.persist.metablock.SRMetaBlockReaderV2;
@@ -62,10 +65,10 @@ import com.starrocks.sql.ast.RefreshSchemeClause;
 import com.starrocks.sql.ast.StatementBase;
 import com.starrocks.sql.optimizer.MvRewritePreprocessor;
 import com.starrocks.sql.optimizer.Utils;
+import com.starrocks.sql.optimizer.rule.transformation.materialization.MVTestBase;
 import com.starrocks.sql.parser.SqlParser;
 import com.starrocks.sql.plan.ConnectorPlanTestBase;
 import com.starrocks.sql.plan.ExecPlan;
-import com.starrocks.sql.plan.PlanTestBase;
 import com.starrocks.statistic.StatisticsMetaManager;
 import com.starrocks.system.Backend;
 import com.starrocks.system.SystemInfoService;
@@ -75,13 +78,10 @@ import mockit.Expectations;
 import mockit.Mock;
 import mockit.MockUp;
 import mockit.Mocked;
-import org.apache.hadoop.util.ThreadUtil;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -90,18 +90,18 @@ import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static com.starrocks.sql.optimizer.MVTestUtils.waitingRollupJobV2Finish;
 
-public class CreateMaterializedViewTest {
+public class CreateMaterializedViewTest extends MVTestBase {
     private static final Logger LOG = LogManager.getLogger(CreateMaterializedViewTest.class);
 
     @Rule
@@ -114,12 +114,8 @@ public class CreateMaterializedViewTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     private static ConnectContext connectContext;
-    private static StarRocksAssert starRocksAssert;
     private static Database testDb;
     private static GlobalStateMgr currentState;
-
-    private static long startSuiteTime = 0;
-    private long startCaseTime = 0;
 
     @BeforeClass
     public static void beforeClass() throws Exception {
@@ -133,7 +129,6 @@ public class CreateMaterializedViewTest {
         // create connect context
         connectContext = UtFrameUtils.createDefaultCtx();
         starRocksAssert = new StarRocksAssert(connectContext);
-        startSuiteTime = Instant.now().getEpochSecond();
 
         if (!starRocksAssert.databaseExist("_statistics_")) {
             StatisticsMetaManager m = new StatisticsMetaManager();
@@ -331,18 +326,6 @@ public class CreateMaterializedViewTest {
 
     @AfterClass
     public static void afterClass() throws Exception {
-        PlanTestBase.cleanupEphemeralMVs(starRocksAssert, startSuiteTime);
-    }
-
-    @Before
-    public void before() {
-        startCaseTime = Instant.now().getEpochSecond();
-    }
-
-    @After
-    public void after() throws Exception {
-        // cleanup mv after each case
-        PlanTestBase.cleanupEphemeralMVs(starRocksAssert, startCaseTime);
     }
 
     private static void dropMv(String mvName) throws Exception {
@@ -853,7 +836,7 @@ public class CreateMaterializedViewTest {
         try {
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof SlotRef);
             SlotRef slotRef = (SlotRef) partitionByExpr;
             Assert.assertEquals("ss", slotRef.getColumnName());
@@ -875,7 +858,7 @@ public class CreateMaterializedViewTest {
         try {
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof SlotRef);
             SlotRef slotRef = (SlotRef) partitionByExpr;
             Assert.assertEquals("ss", slotRef.getColumnName());
@@ -901,6 +884,12 @@ public class CreateMaterializedViewTest {
         }
     }
 
+    private static Expr getMVPartitionByExprChecked(CreateMaterializedViewStatement stmt) {
+        List<Expr> mvPartitionByExprs = stmt.getPartitionByExprs();
+        Assert.assertEquals(1, mvPartitionByExprs.size());
+        return mvPartitionByExprs.get(0);
+    }
+
     @Test
     public void testPartitionWithFunction() {
         String sql = "create materialized view mv1 " +
@@ -914,7 +903,7 @@ public class CreateMaterializedViewTest {
         try {
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof FunctionCallExpr);
             List<SlotRef> slotRefs = Lists.newArrayList();
             partitionByExpr.collect(SlotRef.class, slotRefs);
@@ -939,7 +928,7 @@ public class CreateMaterializedViewTest {
                     "as select a, b, c, d from jdbc0.partitioned_db0.tbl1;";
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof FunctionCallExpr);
             List<SlotRef> slotRefs = Lists.newArrayList();
             partitionByExpr.collect(SlotRef.class, slotRefs);
@@ -987,7 +976,7 @@ public class CreateMaterializedViewTest {
         try {
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof FunctionCallExpr);
             List<SlotRef> slotRefs = Lists.newArrayList();
             partitionByExpr.collect(SlotRef.class, slotRefs);
@@ -1011,7 +1000,7 @@ public class CreateMaterializedViewTest {
         try {
             CreateMaterializedViewStatement createMaterializedViewStatement =
                     (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-            Expr partitionByExpr = createMaterializedViewStatement.getPartitionByExpr();
+            Expr partitionByExpr = getMVPartitionByExprChecked(createMaterializedViewStatement);
             Assert.assertTrue(partitionByExpr instanceof SlotRef);
             List<SlotRef> slotRefs = Lists.newArrayList();
             partitionByExpr.collect(SlotRef.class, slotRefs);
@@ -1327,8 +1316,7 @@ public class CreateMaterializedViewTest {
         try {
             UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
         } catch (Exception e) {
-            e.printStackTrace();
-            Assert.fail();
+            Assert.fail(e.getMessage());
         }
     }
 
@@ -1345,8 +1333,7 @@ public class CreateMaterializedViewTest {
         try {
             UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
         } catch (Exception e) {
-            e.printStackTrace();
-            Assert.fail();
+            Assert.fail(e.getMessage());
         }
     }
 
@@ -2530,7 +2517,7 @@ public class CreateMaterializedViewTest {
                 "\"replication_num\" = \"1\"\n" +
                 ")\n" +
                 "as select date_trunc('month',k1) s1, k2 s2 from tbl1;";
-        assertParseFailWithException(sql, "Can not find database:unexisted_db1.");
+        assertParseFailWithException(sql, "Can not find database:unexisted_db1 in default_catalog.");
     }
 
     @Test
@@ -3176,20 +3163,6 @@ public class CreateMaterializedViewTest {
         testMVColumnAlias("c_1_9 + c_1_10");
     }
 
-    private Table getTable(String dbName, String mvName) {
-        Database db = GlobalStateMgr.getCurrentState().getLocalMetastore().getDb(dbName);
-        Table table = GlobalStateMgr.getCurrentState().getLocalMetastore().getTable(testDb.getFullName(), mvName);
-        Assert.assertNotNull(table);
-        return table;
-    }
-
-    private MaterializedView getMv(String dbName, String mvName) {
-        Table table = getTable(dbName, mvName);
-        Assert.assertTrue(table instanceof MaterializedView);
-        MaterializedView mv = (MaterializedView) table;
-        return mv;
-    }
-
     @Test
     public void testMvNullable() throws Exception {
         starRocksAssert.withTable("create table emps (\n" +
@@ -3814,7 +3787,6 @@ public class CreateMaterializedViewTest {
         try {
             UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
         } catch (Exception e) {
-            e.printStackTrace();
             Assert.fail(e.getMessage());
         }
     }
@@ -3891,8 +3863,7 @@ public class CreateMaterializedViewTest {
             Assert.assertTrue(table instanceof MaterializedView);
             return (MaterializedView) table;
         } catch (Exception e) {
-            e.printStackTrace();
-            Assert.fail();
+            Assert.fail(e.getMessage());
         }
         return null;
     }
@@ -3917,8 +3888,7 @@ public class CreateMaterializedViewTest {
 
             return mv.getFullSchema().stream().filter(Column::isKey).collect(Collectors.toList());
         } catch (Exception e) {
-            e.printStackTrace();
-            Assert.fail();
+            Assert.fail(e.getMessage());
         } finally {
             if (!Objects.isNull(mvName)) {
                 try {
@@ -4207,9 +4177,23 @@ public class CreateMaterializedViewTest {
 
     @Test
     public void createDeltaLakeMV() throws Exception {
+        new MockUp<DeltaLakeTable>() {
+            @Mock
+            public String getTableIdentifier() {
+                String uuid = UUID.randomUUID().toString();
+                return Joiner.on(":").join("tbl", uuid);
+            }
+        };
         starRocksAssert.withMaterializedView("create materialized view mv_deltalake " +
                 " refresh manual" +
                 " as select * from deltalake_catalog.deltalake_db.tbl");
+    }
+
+    @Test
+    public void createPaimonMV() throws Exception {
+        starRocksAssert.withMaterializedView("create materialized view mv_paimon " +
+                " refresh manual" +
+                " as select * from paimon0.pmn_db1.unpartitioned_table");
     }
 
     @Test
@@ -4573,8 +4557,8 @@ public class CreateMaterializedViewTest {
                 starRocksAssert.showCreateTable("show create table mv_enable"));
         starRocksAssert.refreshMV("refresh materialized view mv_enable with sync mode");
         MaterializedView mv = starRocksAssert.getMv("test", "mv_enable");
-        Pair<Boolean, String> valid = MvRewritePreprocessor.isMVValidToRewriteQuery(connectContext, mv, true, null);
-        Assert.assertTrue(valid.first);
+        MVPlanValidationResult valid = MvRewritePreprocessor.isMVValidToRewriteQuery(connectContext, mv, true, null, false);
+        Assert.assertTrue(valid.getStatus().isValid());
 
         starRocksAssert.ddl("alter materialized view mv_enable set('enable_query_rewrite'='false') ");
         Assert.assertEquals("CREATE MATERIALIZED VIEW `mv_enable` (`c_1_0`, `c_1_1`, `c_1_2`, `c_1_3`, " +
@@ -4592,9 +4576,9 @@ public class CreateMaterializedViewTest {
                         "`t1`.`c_1_12`\n" +
                         "FROM `test`.`t1`;",
                 starRocksAssert.showCreateTable("show create table mv_enable"));
-        valid = MvRewritePreprocessor.isMVValidToRewriteQuery(connectContext, mv, true, null);
-        Assert.assertFalse(valid.first);
-        Assert.assertEquals("enable_query_rewrite=FALSE", valid.second);
+        valid = MvRewritePreprocessor.isMVValidToRewriteQuery(connectContext, mv, true, null, false);
+        Assert.assertFalse(valid.getStatus().isValid());
+        Assert.assertEquals("enable_query_rewrite=FALSE", valid.getReason());
         starRocksAssert.dropMaterializedView("mv_enable");
     }
 
@@ -4739,7 +4723,8 @@ public class CreateMaterializedViewTest {
         String result = starRocksAssert.showCreateTable("show create table mv_with_location");
         System.out.println(result);
         Assert.assertTrue(result.contains("rack:*"));
-        for (Tablet tablet : materializedView.getPartitions().iterator().next().getBaseIndex().getTablets()) {
+        for (Tablet tablet : materializedView.getPartitions().iterator().next()
+                .getDefaultPhysicalPartition().getBaseIndex().getTablets()) {
             Assert.assertEquals(backend.getId(), (long) tablet.getBackendIds().iterator().next());
         }
 
@@ -4821,7 +4806,7 @@ public class CreateMaterializedViewTest {
                 "as select a, b, c, d from jdbc0.partitioned_db0.tbl1;";
         CreateMaterializedViewStatement stmt =
                 (CreateMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
-        Expr partitionByExpr = stmt.getPartitionByExpr();
+        Expr partitionByExpr = getMVPartitionByExprChecked(stmt);
         Assert.assertTrue(partitionByExpr instanceof SlotRef);
         List<SlotRef> slotRefs = Lists.newArrayList();
         partitionByExpr.collect(SlotRef.class, slotRefs);
@@ -4831,5 +4816,794 @@ public class CreateMaterializedViewTest {
             MaterializedView mv = starRocksAssert.getMv("test", "mv1");
             Assert.assertTrue(mv.getPartitionInfo().isListPartition());
         });
+    }
+
+    @Test
+    public void testCreateMVWithMultiPartitionColumns1() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        // create mv with multi partition columns
+        {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (province, dt) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as select dt, province, sum(age) from t3 group by dt, province;");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            List<Column> mvPartitionCols = mv.getPartitionColumns();
+            Assert.assertEquals(2, mvPartitionCols.size());
+            Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+            Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+            starRocksAssert.dropMaterializedView("mv1");
+        }
+
+        // create mv with multi partition columns and partition expressions
+        {
+            try {
+                starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                        "partition by (province, str2date(dt, '%Y%m%d')) \n" +
+                        "REFRESH DEFERRED MANUAL \n" +
+                        "properties ('partition_refresh_number' = '-1')" +
+                        "as select dt, province, sum(age) from t3 group by dt, province;");
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("List materialized view's partition expression can only refer " +
+                        "ref-base-table's partition expression without transforms but contains"));
+            }
+        }
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithMultiPartitionColumns2() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt, age) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\", \"10\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\", \"20\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\", \"30\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\", \"40\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        // create mv with multi partition columns
+        {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (province, dt, age) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            List<Column> mvPartitionCols = mv.getPartitionColumns();
+            Assert.assertEquals(3, mvPartitionCols.size());
+            Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+            Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+            Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+            starRocksAssert.dropMaterializedView("mv1");
+        }
+
+        // create mv with multi partition columns
+        {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (dt, province, age) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            List<Column> mvPartitionCols = mv.getPartitionColumns();
+            Assert.assertEquals(3, mvPartitionCols.size());
+            Assert.assertEquals("dt", mvPartitionCols.get(0).getName());
+            Assert.assertEquals("province", mvPartitionCols.get(1).getName());
+            Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+            starRocksAssert.dropMaterializedView("mv1");
+        }
+
+        // create mv with multi partition columns
+        {
+            try {
+                starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                        "partition by (province, dt) \n" +
+                        "REFRESH DEFERRED MANUAL \n" +
+                        "properties ('partition_refresh_number' = '-1')" +
+                        "as select dt, province, max(age) from t3 group by dt, province;");
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("Materialized view partition columns size(2) must be same with " +
+                        "ref base table(3)."));
+            }
+        }
+
+        // create mv with multi partition columns and partition expressions
+        {
+            try {
+                starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                        "partition by (province, str2date(dt, '%Y%m%d')) \n" +
+                        "REFRESH DEFERRED MANUAL \n" +
+                        "properties ('partition_refresh_number' = '-1')" +
+                        "as select dt, province, sum(age) from t3 group by dt, province;");
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("Materialized view partition columns size(2) must " +
+                        "be same with ref base table(3)."));
+            }
+        }
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithMultiPartitionColumns3() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt, age) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\", \"10\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\", \"20\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\", \"30\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\", \"40\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        starRocksAssert.withTable("CREATE TABLE t4 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt, age) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\", \"10\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\", \"20\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\", \"30\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\", \"40\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (province, dt, age) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as " +
+                    "select dt, province, age, sum(id) from t3 group by dt, province, age " +
+                    "UNION ALL " +
+                    "select dt, province, age, sum(id) from t4 group by dt, province, age " +
+                    ";");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            List<Column> mvPartitionCols = mv.getPartitionColumns();
+            Assert.assertEquals(3, mvPartitionCols.size());
+            Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+            Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+            Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+            starRocksAssert.dropMaterializedView("mv1");
+        }
+
+        {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (col1, col2, col3) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as " +
+                    "select t3.dt col1, t3.province col2, t3.age col3, t3.id col4, " +
+                    "   t4.dt col5, t4.province col6, t4.age col7, t4.id col8 " +
+                    "   from t3 join t4 \n" +
+                    "   on t3.dt=t4.dt and t3.age=t4.age and t3.province=t4.province;" +
+                    ";");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            List<Column> mvPartitionCols = mv.getPartitionColumns();
+            Assert.assertEquals(3, mvPartitionCols.size());
+            Assert.assertEquals("col1", mvPartitionCols.get(0).getName());
+            Assert.assertEquals("col2", mvPartitionCols.get(1).getName());
+            Assert.assertEquals("col3", mvPartitionCols.get(2).getName());
+            starRocksAssert.dropMaterializedView("mv1");
+        }
+
+        {
+            try {
+                starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                        "partition by (col1, col2, col3) \n" +
+                        "REFRESH DEFERRED MANUAL \n" +
+                        "properties ('partition_refresh_number' = '-1')" +
+                        "as " +
+                        "select t3.dt col1, t3.province col2, t3.age col3, t3.id col4, " +
+                        "   t4.dt col5, t4.province col6, t4.age col7, t4.id col8 " +
+                        "   from t3 join t4 \n" +
+                        "   on t3.dt=t4.dt;" +
+                        ";");
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("The current partition expr maps size 1 should be equal " +
+                        "to the size of the first partition expr maps: 2."));
+            }
+        }
+        starRocksAssert.dropTable("t3");
+        starRocksAssert.dropTable("t4");
+    }
+
+    @Test
+    public void testHiveMVInExternalCatalog() throws DdlException {
+        try {
+            starRocksAssert.useCatalog("hive0");
+            String sql = "CREATE MATERIALIZED VIEW tpch.supplier_mv " +
+                    "DISTRIBUTED BY HASH(`s_suppkey`) BUCKETS 10 REFRESH MANUAL " +
+                    "AS select s_suppkey, s_nationkey, " +
+                    "sum(s_acctbal) as total_s_acctbal, count(s_phone) as s_phone_count from hive0.tpch.supplier as supp " +
+                    "group by s_suppkey, s_nationkey order by s_suppkey;";
+            UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Can not find database"));
+        } finally {
+            starRocksAssert.useCatalog(InternalCatalog.DEFAULT_INTERNAL_CATALOG_NAME);
+        }
+    }
+
+    @Test
+    public void testHiveMVInDefaultCatalog() throws Exception {
+        String sql = "CREATE MATERIALIZED VIEW supplier_mv " +
+                "DISTRIBUTED BY HASH(`s_suppkey`) BUCKETS 10 REFRESH MANUAL " +
+                "AS select s_suppkey, s_nationkey, " +
+                "sum(s_acctbal) as total_s_acctbal, count(s_phone) as s_phone_count from hive0.tpch.supplier as supp " +
+                "group by s_suppkey, s_nationkey order by s_suppkey;";
+        UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
+    }
+
+    @Test
+    public void testCreateMVWithAutoRefreshPartitionsLimit() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt, age) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\", \"10\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\", \"20\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\", \"30\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\", \"40\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                "partition by (province, dt, age) \n" +
+                "REFRESH ASYNC\n" +
+                "properties (\n" +
+                "'replication_num' = '1',\n" +
+                // check auto_refresh_partitions_limit parameter
+                "'auto_refresh_partitions_limit' = '1'," +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ") \n" +
+                "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        List<Column> mvPartitionCols = mv.getPartitionColumns();
+        Assert.assertEquals(3, mvPartitionCols.size());
+        Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+        Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+        Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithRetentionCondition1() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province, dt, age) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\", \"10\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\", \"20\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\", \"30\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\", \"40\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                "partition by (province, dt, age) \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "properties (\n" +
+                "'replication_num' = '1',\n" +
+                "'partition_refresh_number' = '-1'," +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ") \n" +
+                "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        List<Column> mvPartitionCols = mv.getPartitionColumns();
+        Assert.assertEquals(3, mvPartitionCols.size());
+        Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+        Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+        Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithRetentionCondition2() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY province, dt, age\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                "partition by (province, dt, age) \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "properties (\n" +
+                "'replication_num' = '1',\n" +
+                "'partition_refresh_number' = '-1'," +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ") \n" +
+                "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        List<Column> mvPartitionCols = mv.getPartitionColumns();
+        Assert.assertEquals(3, mvPartitionCols.size());
+        Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+        Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+        Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithRetentionCondition3() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        try {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties (\n" +
+                    "'replication_num' = '1',\n" +
+                    "'partition_refresh_number' = '-1'," +
+                    "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                    ") \n" +
+                    "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("partition_retention_condition is " +
+                    "only supported by partitioned materialized-view."));
+        }
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithRetentionCondition4() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE t3 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10) not null,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY province, dt, age\n" +
+                "DISTRIBUTED BY RANDOM\n");
+        starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                "partition by (province, dt, age) \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "properties (\n" +
+                "'replication_num' = '1',\n" +
+                "'partition_refresh_number' = '-1'," +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ") \n" +
+                "as select dt, province, age, sum(id) from t3 group by dt, province, age;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        List<Column> mvPartitionCols = mv.getPartitionColumns();
+        Assert.assertEquals(3, mvPartitionCols.size());
+        Assert.assertEquals("province", mvPartitionCols.get(0).getName());
+        Assert.assertEquals("dt", mvPartitionCols.get(1).getName());
+        Assert.assertEquals("age", mvPartitionCols.get(2).getName());
+
+        String retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("dt > current_date() - interval 1 month", retentionCondition);
+
+        try {
+            String alterTableSql = "ALTER MATERIALIZED VIEW mv1 SET ('partition_retention_condition' = " +
+                    "'last_day(dt) > current_date() - interval 2 month')";
+            starRocksAssert.alterMvProperties(alterTableSql);
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Retention condition must only contain FE constant functions " +
+                    "for materialized view but contains: last_day"));
+        }
+
+        String alterTableSql = "ALTER MATERIALIZED VIEW mv1 SET ('partition_retention_condition' = " +
+                "'date_format(dt, \\'%m月%Y年\\') > current_date() - interval 2 month')";
+        starRocksAssert.alterMvProperties(alterTableSql);
+
+        retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("date_format(dt, '%m月%Y年') > current_date() - interval 2 month", retentionCondition);
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("t3");
+    }
+
+    @Test
+    public void testCreateMVWithRetentionCondition5() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE r1 \n" +
+                "(\n" +
+                "    dt date,\n" +
+                "    k2 int,\n" +
+                "    v1 int \n" +
+                ")\n" +
+                "PARTITION BY RANGE(dt)\n" +
+                "(\n" +
+                "    PARTITION p0 values [('2024-01-29'),('2024-01-30')),\n" +
+                "    PARTITION p1 values [('2024-01-30'),('2024-01-31')),\n" +
+                "    PARTITION p2 values [('2024-01-31'),('2024-02-01')),\n" +
+                "    PARTITION p3 values [('2024-02-01'),('2024-02-02')) \n" +
+                ")\n" +
+                "DISTRIBUTED BY HASH(k2) BUCKETS 3\n" +
+                "PROPERTIES (\n" +
+                "'replication_num' = '1',\n" +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ")");
+        starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                "partition by (dt) \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "properties (\n" +
+                "'replication_num' = '1',\n" +
+                "'partition_refresh_number' = '-1'," +
+                "'partition_retention_condition' = 'dt > current_date() - interval 1 month'\n" +
+                ") \n" +
+                "as select * from r1;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        String retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("dt > current_date() - interval 1 month", retentionCondition);
+
+        try {
+            String alterTableSql = "ALTER MATERIALIZED VIEW mv1 SET ('partition_retention_condition' = " +
+                    "'last_day(dt) > current_date() - interval 2 month')";
+            starRocksAssert.alterMvProperties(alterTableSql);
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Retention condition must only contain monotonic functions for " +
+                    "range partition tables but contains: last_day"));
+        }
+
+        try {
+
+            String alterTableSql = "ALTER MATERIALIZED VIEW mv1 SET ('partition_retention_condition' = " +
+                    "'date_format(dt, \\'%m月%Y年\\') > current_date() - interval 2 month')";
+            starRocksAssert.alterMvProperties(alterTableSql);
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Retention condition must only contain monotonic functions for " +
+                    "range partition tables but contains: date_format"));
+        }
+
+        retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("dt > current_date() - interval 1 month", retentionCondition);
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("r1");
+    }
+
+    @Test
+    public void testCreateMVWithMultiCommonPartitionExpressions1() throws Exception {
+        starRocksAssert.withTable("create table tt1(k1 datetime, k2 datetime, v int) " +
+                "partition by date_trunc('day', k1), date_trunc('month', k2);\n");
+        starRocksAssert.withMaterializedView("\n" +
+                "CREATE MATERIALIZED VIEW mv1\n" +
+                "PARTITION BY (date_trunc('day', k1), date_trunc('month', k2))\n" +
+                "REFRESH ASYNC\n" +
+                "PROPERTIES(\n" +
+                "    \"auto_refresh_partitions_limit\"=\"30\"\n" +
+                ")\n" +
+                "as select * from tt1;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        Assert.assertTrue(mv != null);
+        String alterTableSql = "ALTER MATERIALIZED VIEW mv1 SET ('partition_retention_condition' = " +
+                "'date_trunc(\\'day\\', k1) > current_date() - interval 2 month')";
+        starRocksAssert.alterMvProperties(alterTableSql);
+        String retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("date_trunc('day', k1) > current_date() - interval 2 month", retentionCondition);
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("tt1");
+    }
+
+    @Test
+    public void testCreateMVWithMultiCommonPartitionExpressions2() throws Exception {
+        starRocksAssert.withTable("create table tt1(k1 datetime, k2 datetime, v int) " +
+                "partition by date_trunc('day', k1), date_trunc('month', k2);\n");
+        starRocksAssert.withMaterializedView("\n" +
+                "CREATE MATERIALIZED VIEW mv1\n" +
+                "PARTITION BY (date_trunc('day', k1), date_trunc('month', k2))\n" +
+                "REFRESH ASYNC\n" +
+                "PROPERTIES(\n" +
+                "    \"auto_refresh_partitions_limit\"=\"30\",\n" +
+                "   'partition_retention_condition' = 'date_trunc(\\'day\\', k1) > current_date() - interval 2 month'" +
+                ")\n" +
+                "as select * from tt1;");
+        MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+        Assert.assertTrue(mv != null);
+        String retentionCondition = mv.getTableProperty().getPartitionRetentionCondition();
+        Assert.assertEquals("date_trunc('day', k1) > current_date() - interval 2 month", retentionCondition);
+        starRocksAssert.dropMaterializedView("mv1");
+        starRocksAssert.dropTable("tt1");
+    }
+
+    @Test
+    public void testDisableCreateListMVWithDateTimeRollup1() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE IF NOT EXISTS test_tbl_A (\n" +
+                "  hour DATETIME,\n" +
+                "  partner_id BIGINT,\n" +
+                "  impressions BIGINT\n" +
+                ")PARTITION BY (hour);");
+        try {
+            starRocksAssert.withMaterializedView("CREATE MATERIALIZED VIEW test.test_mv_A\n" +
+                    "PARTITION BY day\n" +
+                    "REFRESH ASYNC\n" +
+                    "AS\n" +
+                    "select\n" +
+                    "    date_trunc('day', hour) as day,\n" +
+                    "    partner_id,\n" +
+                    "    sum(impressions) as impressions\n" +
+                    "from test_tbl_A\n" +
+                    "group by 1,2");
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("List materialized view's partition expression can only refer " +
+                    "ref-base-table's partition expression without transforms but contains"));
+        }
+    }
+
+    @Test
+    public void testDisableCreateListMVWithDateTimeRollup2() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE IF NOT EXISTS test_tbl_A (\n" +
+                "  hour DATETIME,\n" +
+                "  partner_id BIGINT,\n" +
+                "  impressions BIGINT\n" +
+                ")PARTITION BY (partner_id, hour);");
+        try {
+            starRocksAssert.withMaterializedView("CREATE MATERIALIZED VIEW test.test_mv_A\n" +
+                    "PARTITION BY (day, partner_id)\n" +
+                    "REFRESH ASYNC\n" +
+                    "AS\n" +
+                    "select\n" +
+                    "    date_trunc('day', hour) as day,\n" +
+                    "    partner_id,\n" +
+                    "    sum(impressions) as impressions\n" +
+                    "from test_tbl_A\n" +
+                    "group by 1,2");
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("List materialized view's partition expression can only refer " +
+                    "ref-base-table's partition expression without transforms but contains"));
+        }
+    }
+
+    @Test
+    public void testCreateMVWithWrongPartitionByExprs1() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE tt1 (\n" +
+                "        sku_id varchar(100),\n" +
+                "        total_amount decimal,\n" +
+                "        id int,\n" +
+                "        create_time int\n" +
+                ")\n" +
+                "PARTITION BY RANGE(from_unixtime(create_time))(\n" +
+                "START (\"2021-01-01\") END (\"2021-01-10\") EVERY (INTERVAL 1 DAY)\n" +
+                ");");
+        try {
+            starRocksAssert.withMaterializedView("create materialized view mv1 refresh manual " +
+                    "partition by create_time as select id,create_time from tt1;");
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Materialized view partition function derived from " +
+                    "CAST(from_unixtime(create_time) AS DATETIME) of base table tt1 is not supported yet"));
+        }
+    }
+
+    @Test
+    public void testCreateMVWithWrongPartitionByExprs2() throws Exception {
+        starRocksAssert.withTable("CREATE TABLE tt1 (\n" +
+                "        sku_id varchar(100),\n" +
+                "        total_amount decimal,\n" +
+                "        id int,\n" +
+                "        create_time string\n" +
+                ")\n" +
+                "PARTITION BY RANGE(str2date(create_time, '%Y-%m-%d'))(\n" +
+                "START (\"2021-01-01\") END (\"2021-01-10\") EVERY (INTERVAL 1 DAY)\n" +
+                ");");
+        try {
+            starRocksAssert.withMaterializedView("create materialized view mv1 refresh manual " +
+                    "partition by create_time as select id,create_time from tt1;");
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Materialized view is partitioned by string " +
+                    "type column create_time but ref base table tt1 is range partitioned, " +
+                    "please use str2date partition expression."));
+        }
+    }
+
+    @Test
+    public void testCreateMaterializedViewOnListPartitionTablesActive() throws Exception {
+        String createSQL = "CREATE TABLE test.list_partition_tbl1 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt VARCHAR(10),\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "ENGINE=olap\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY LIST (province) (\n" +
+                "     PARTITION p1 VALUES IN (\"beijing\",\"chongqing\") ,\n" +
+                "     PARTITION p2 VALUES IN (\"guangdong\") \n" +
+                ")\n" +
+                "DISTRIBUTED BY HASH(id) BUCKETS 10\n" +
+                "PROPERTIES (\n" +
+                "    \"replication_num\" = \"1\"\n" +
+                ")";
+        starRocksAssert.withTable(createSQL);
+
+        String sql = "create materialized view list_partition_mv1 " +
+                "partition by province " +
+                "distributed by hash(dt, province) buckets 10 " +
+                "PROPERTIES (\n" +
+                "\"replication_num\" = \"1\"" +
+                ") " +
+                "as select dt, province, avg(age) from list_partition_tbl1 group by dt, province;";
+        try {
+            starRocksAssert.withMaterializedView(sql);
+            MaterializedView mv = (MaterializedView) starRocksAssert.getTable("test", "list_partition_mv1");
+
+            String result = mv.getMaterializedViewDdlStmt(false, false);
+            String expect = "CREATE MATERIALIZED VIEW `list_partition_mv1` (`dt`, `province`, `avg(age)`)\n" +
+                    "PARTITION BY (`province`)\n" +
+                    "DISTRIBUTED BY HASH(`dt`, `province`) BUCKETS 10 \n" +
+                    "REFRESH MANUAL\n" +
+                    "PROPERTIES (\n" +
+                    "\"replicated_storage\" = \"true\",\n" +
+                    "\"replication_num\" = \"1\",\n" +
+                    "\"storage_medium\" = \"HDD\"\n" +
+                    ")\n" +
+                    "AS SELECT `test`.`list_partition_tbl1`.`dt`, `test`.`list_partition_tbl1`.`province`, " +
+                    "avg(`test`.`list_partition_tbl1`.`age`) AS `avg(age)`\n" +
+                    "FROM `test`.`list_partition_tbl1`\n" +
+                    "GROUP BY `test`.`list_partition_tbl1`.`dt`, `test`.`list_partition_tbl1`.`province`;";
+            Assert.assertTrue(expect.equals(result));
+
+            sql = "alter materialized view list_partition_mv1 inactive";
+            starRocksAssert.alterMvProperties(sql);
+
+            sql = "alter materialized view list_partition_mv1 active";
+            starRocksAssert.alterMvProperties(sql);
+
+            mv = (MaterializedView) starRocksAssert.getTable("test", "list_partition_mv1");
+            result = mv.getMaterializedViewDdlStmt(false, false);
+            Assert.assertTrue(expect.equals(result));
+        } catch (Exception e) {
+            Assert.fail(e.getMessage());
+        }
+        starRocksAssert.dropTable("list_partition_tbl1");
+    }
+
+    @Test
+    public void testCreateMaterializedViewOnMultiPartitionColumns1() throws Exception {
+        String createSQL = "CREATE TABLE test.list_partition_tbl1 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt datetime,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "ENGINE=olap\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY province, date_trunc('day', dt) \n" +
+                "DISTRIBUTED BY HASH(id) BUCKETS 10\n" +
+                "PROPERTIES (\n" +
+                "    \"replication_num\" = \"1\"\n" +
+                ")";
+        starRocksAssert.withTable(createSQL);
+
+        String sql = "create materialized view list_partition_mv1 " +
+                "PARTITION BY (pr1, date_trunc('day', dt1)) \n" +
+                "distributed by hash(dt, province) buckets 10 " +
+                "PROPERTIES (\n" +
+                "\"replication_num\" = \"1\"" +
+                ") " +
+                "as select dt as dt1, province as pr1, avg(age) from list_partition_tbl1 group by dt, province;";
+        try {
+            starRocksAssert.withMaterializedView(sql);
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("Please check the partition expression pr1, " +
+                    "it should refer base table's partition column directly."));
+        }
+        starRocksAssert.dropTable("list_partition_tbl1");
+    }
+
+    @Test
+    public void testCreateMaterializedViewOnMultiPartitionColumns2() throws Exception {
+        String createSQL = "CREATE TABLE test.list_partition_tbl1 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt datetime,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "ENGINE=olap\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY province, date_trunc('day', dt) \n" +
+                "DISTRIBUTED BY HASH(id) BUCKETS 10\n" +
+                "PROPERTIES (\n" +
+                "    \"replication_num\" = \"1\"\n" +
+                ")";
+        starRocksAssert.withTable(createSQL);
+
+        String sql = "create materialized view list_partition_mv1 " +
+                "PARTITION BY (date_trunc('day', dt)) \n" +
+                "distributed by hash(dt, province) buckets 10 " +
+                "PROPERTIES (\n" +
+                "\"replication_num\" = \"1\"" +
+                ") " +
+                "as select dt as dt, province , avg(age) from list_partition_tbl1 group by dt, province;";
+        try {
+            starRocksAssert.withMaterializedView(sql);
+        } catch (Exception e) {
+            Assert.fail();
+        }
+        starRocksAssert.dropTable("list_partition_tbl1");
+    }
+
+    @Test
+    public void testCreateMaterializedViewOnMultiPartitionColumnsActive1() throws Exception {
+        String createSQL = "CREATE TABLE test.list_partition_tbl1 (\n" +
+                "      id BIGINT,\n" +
+                "      age SMALLINT,\n" +
+                "      dt datetime,\n" +
+                "      province VARCHAR(64) not null\n" +
+                ")\n" +
+                "ENGINE=olap\n" +
+                "DUPLICATE KEY(id)\n" +
+                "PARTITION BY province, date_trunc('day', dt) \n" +
+                "DISTRIBUTED BY HASH(id) BUCKETS 10\n" +
+                "PROPERTIES (\n" +
+                "    \"replication_num\" = \"1\"\n" +
+                ")";
+        starRocksAssert.withTable(createSQL);
+
+        String sql = "create materialized view list_partition_mv1 " +
+                "PARTITION BY (province, date_trunc('day', dt)) \n" +
+                "distributed by hash(dt, province) buckets 10 " +
+                "PROPERTIES (\n" +
+                "\"replication_num\" = \"1\"" +
+                ") " +
+                "as select dt, province, avg(age) from list_partition_tbl1 group by dt, province;";
+        starRocksAssert.withMaterializedView(sql);
+        MaterializedView mv = (MaterializedView) starRocksAssert.getTable("test", "list_partition_mv1");
+
+        String result = mv.getMaterializedViewDdlStmt(false, false);
+        System.out.println(result);
+
+        sql = "alter materialized view list_partition_mv1 inactive";
+        starRocksAssert.alterMvProperties(sql);
+
+        sql = "alter materialized view list_partition_mv1 active";
+        starRocksAssert.alterMvProperties(sql);
+
+        mv = (MaterializedView) starRocksAssert.getTable("test", "list_partition_mv1");
+        String result2 = mv.getMaterializedViewDdlStmt(false, false);
+        Assert.assertTrue(result2.equals(result));
+
+        starRocksAssert.dropTable("list_partition_tbl1");
     }
 }

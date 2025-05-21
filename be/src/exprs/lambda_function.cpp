@@ -32,16 +32,19 @@ namespace starrocks {
 
 LambdaFunction::LambdaFunction(const TExprNode& node) : Expr(node, false), _common_sub_expr_num(node.output_column) {}
 
-Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, Expr* expr, ExtractContext* ctx) {
+Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, ExprContext* expr_ctx, Expr* expr,
+                                                  ExtractContext* ctx) {
     if (expr->is_lambda_function()) {
         auto lambda_function = static_cast<LambdaFunction*>(expr);
         RETURN_IF_ERROR(lambda_function->collect_lambda_argument_ids());
         for (auto argument_id : lambda_function->get_lambda_arguments_ids()) {
-            ctx->lambda_arguments.insert(argument_id);
+            ctx->current_lambda_arguments.insert(argument_id);
+            ctx->all_lambda_arguments.insert(argument_id);
         }
         RETURN_IF_ERROR(lambda_function->collect_common_sub_exprs());
         for (auto slot_id : lambda_function->get_common_sub_expr_ids()) {
-            ctx->common_sub_expr_ids.insert(slot_id);
+            ctx->current_common_sub_expr_ids.insert(slot_id);
+            ctx->all_common_sub_expr_ids.insert(slot_id);
         }
     }
 
@@ -49,13 +52,17 @@ Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, Expr* exp
         if (expr->is_lambda_function()) {
             auto lambda_function = static_cast<LambdaFunction*>(expr);
             for (auto argument_id : lambda_function->get_lambda_arguments_ids()) {
-                ctx->lambda_arguments.erase(argument_id);
+                ctx->current_lambda_arguments.erase(argument_id);
             }
             for (auto slot_id : lambda_function->get_common_sub_expr_ids()) {
-                ctx->common_sub_expr_ids.erase(slot_id);
+                ctx->current_common_sub_expr_ids.erase(slot_id);
             }
         }
     });
+
+    if (expr->is_dictmapping_expr()) {
+        return Status::OK();
+    }
 
     // for the lambda function, we only consider extracting the outer common expression from the lambda expr,
     // not its arguments
@@ -65,21 +72,26 @@ Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, Expr* exp
     for (int i = 0; i < child_num; i++) {
         auto child = expr->get_child(i);
 
-        RETURN_IF_ERROR(extract_outer_common_exprs(state, child, ctx));
+        RETURN_IF_ERROR(extract_outer_common_exprs(state, expr_ctx, child, ctx));
         // if child is a slotref or a lambda function or a literal, we can't replace it.
-        if (child->is_slotref() || child->is_lambda_function() || child->is_literal()) {
+        if (child->is_slotref() || child->is_lambda_function() || child->is_literal() || child->is_constant()) {
             continue;
         }
 
         slot_ids.clear();
         child->get_slot_ids(&slot_ids);
         bool is_independent = std::all_of(slot_ids.begin(), slot_ids.end(), [ctx](const SlotId& id) {
-            return ctx->lambda_arguments.find(id) == ctx->lambda_arguments.end() &&
-                   ctx->common_sub_expr_ids.find(id) == ctx->common_sub_expr_ids.end();
+            return ctx->current_lambda_arguments.find(id) == ctx->current_lambda_arguments.end() &&
+                   ctx->current_common_sub_expr_ids.find(id) == ctx->current_common_sub_expr_ids.end();
         });
 
         if (is_independent) {
             SlotId slot_id = ctx->next_slot_id++;
+#ifdef DEBUG
+            expr_ctx->root()->for_each_slot_id([new_slot_id = slot_id](SlotId slot_id) {
+                DCHECK_NE(new_slot_id, slot_id) << "slot_id " << new_slot_id << " already exists in expr_ctx";
+            });
+#endif
             ColumnRef* column_ref = state->obj_pool()->add(new ColumnRef(child->type(), slot_id));
             VLOG(2) << "add new common expr, slot_id: " << slot_id << ", new expr: " << column_ref->debug_string()
                     << ", old expr: " << child->debug_string();
@@ -91,8 +103,8 @@ Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, Expr* exp
     return Status::OK();
 }
 
-Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, ExtractContext* ctx) {
-    RETURN_IF_ERROR(extract_outer_common_exprs(state, this, ctx));
+Status LambdaFunction::extract_outer_common_exprs(RuntimeState* state, ExprContext* expr_ctx, ExtractContext* ctx) {
+    RETURN_IF_ERROR(extract_outer_common_exprs(state, expr_ctx, this, ctx));
     return Status::OK();
 }
 
@@ -109,12 +121,6 @@ Status LambdaFunction::collect_lambda_argument_ids() {
                                                  _arguments_ids.size(), child_num - 1));
     }
     return Status::OK();
-}
-
-SlotId LambdaFunction::max_used_slot_id() const {
-    SlotId max_slot_id = 0;
-    for_each_slot_id([&max_slot_id](SlotId slot_id) { max_slot_id = std::max(max_slot_id, slot_id); });
-    return max_slot_id;
 }
 
 Status LambdaFunction::collect_common_sub_exprs() {
@@ -208,7 +214,7 @@ Status LambdaFunction::prepare(starrocks::RuntimeState* state, starrocks::ExprCo
 
 StatusOr<ColumnPtr> LambdaFunction::evaluate_checked(ExprContext* context, Chunk* chunk) {
     for (auto i = 0; i < _common_sub_expr.size(); ++i) {
-        auto sub_col = EVALUATE_NULL_IF_ERROR(context, _common_sub_expr[i], chunk);
+        ASSIGN_OR_RETURN(auto sub_col, context->evaluate(_common_sub_expr[i], chunk));
         chunk->append_column(sub_col, _common_sub_expr_ids[i]);
     }
     return get_child(0)->evaluate_checked(context, chunk);
@@ -235,4 +241,5 @@ std::string LambdaFunction::debug_string() const {
     out << ")";
     return out.str();
 }
+
 } // namespace starrocks

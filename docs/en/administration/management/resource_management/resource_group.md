@@ -24,7 +24,7 @@ The roadmap of Resource Group:
 | 2.3             | √              | √              | √                     | ×           | ×           | ×                                        | x              |
 | 2.5             | √              | √              | √                     | √           | ×           | ×                                        | x              |
 | 3.1 & 3.2       | √              | √              | √                     | √           | √           | ×                                        | x              |
-| 3.3.5 and later | √              | √              | √                     | √           | √           | √                                        | √              |
+| 3.3.5 and later | √              | √              | √                     | √           | √           | ×                                        | √              |
 
 ## Terms
 
@@ -229,12 +229,6 @@ To use resource group, you must enable Pipeline Engine for your StarRocks cluste
 SET enable_pipeline_engine = true;
 -- Enable Pipeline Engine globally.
 SET GLOBAL enable_pipeline_engine = true;
-```
-
-For loading tasks, you also need to set the FE configuration item `enable_pipeline_load` to enable the Pipeline engine for loading tasks. This item is supported from v2.5.0 onwards.
-
-```sql
-ADMIN SET FRONTEND CONFIG ("enable_pipeline_load" = "true");
 ```
 
 > **NOTE**

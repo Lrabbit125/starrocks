@@ -79,11 +79,16 @@ public class StreamingAggTuningAnalyzer implements PlanTuningAnalyzer.Analyzer {
                 double inputRows = skeletonNode.getNodeExecStats().getPushRows();
                 double streamingOutputRows = skeletonNode.getNodeExecStats().getPullRows();
                 BlockingAggNode blockingAggNode = findBlockingAggNode(skeletonNode);
-                double blockingOutputRows = blockingAggNode.getNodeExecStats().getPullRows();
-                if (blockingOutputRows < inputRows && (inputRows / streamingOutputRows) < STREAMING_AGGREGATION_THRESHOLD
-                        && (inputRows / blockingOutputRows) > AGGREGATION_THRESHOLD) {
-                    tuningGuides.addTuningGuide(skeletonNode.getNodeId(),
-                            new StreamingAggTuningGuide((StreamingAggNode) skeletonNode));
+                if (blockingAggNode != null) {
+                    double blockingOutputRows = blockingAggNode.getNodeExecStats().getPullRows();
+                    // If the streaming aggregation has poor aggregation effectiveness while the final blocking aggregation
+                    // performs exceptionally well, switch the streaming aggregation to `force_preaggregation` mode.
+                    if (blockingOutputRows < inputRows
+                            && (inputRows / streamingOutputRows) < STREAMING_AGGREGATION_THRESHOLD
+                            && (inputRows / blockingOutputRows) > AGGREGATION_THRESHOLD) {
+                        tuningGuides.addTuningGuide(skeletonNode.getNodeId(), skeletonNode.getOperatorId(),
+                                new StreamingAggTuningGuide((StreamingAggNode) skeletonNode));
+                    }
                 }
             }
             visit(optExpression, context);

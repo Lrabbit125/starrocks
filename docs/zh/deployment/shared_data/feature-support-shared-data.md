@@ -84,6 +84,7 @@ StarRocks 支持以下对象存储服务的存储卷：
   - AWS S3
   - GCS、OSS、OBS、COS、TOS、KS3、MinIO 和 Ceph S3
 - Azure Blob Storage（从 v3.1.1 起支持）：`azblob://<azblob_path>`
+- Azure Data Lake Storage Gen2（从 v3.4.1 起支持）：`adls2://<file_system_name>/<dir_name>`
 
 #### 认证
 
@@ -97,6 +98,9 @@ StarRocks 支持以下对象存储服务的存储卷：
 - GCS、OSS、OBS、COS、TOS、KS3、MinIO 和 Ceph S3
   - 访问密钥
 - Azure Blob Storage
+  - Shared Key
+  - Shared Access Signatures（SAS）
+- Azure Data Lake Storage Gen2
   - Shared Key
   - Shared Access Signatures（SAS）
 
@@ -256,6 +260,5 @@ SSB 1TB 数据集
 - 全文倒排索引
 - 行列混存
 - 全局字典对象
-- 生成列
 - 备份和恢复
 

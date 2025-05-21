@@ -20,6 +20,7 @@ import com.starrocks.qe.ConnectContext;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
 public class Tracers {
@@ -195,6 +196,13 @@ public class Tracers {
         tracers.tracer(module, Mode.LOGS).log(func, args);
     }
 
+    // lazy log, use it if you want to avoid construct log string when log is disabled
+    public static void log(Tracers tracers, Module module, Function<Object[], String> func, Object... args) {
+        synchronized (tracers) {
+            tracers.tracer(module, Mode.LOGS).log(func, args);
+        }
+    }
+
     public static void log(String log, Object... args) {
         Tracers tracers = THREAD_LOCAL.get();
         tracers.tracer(Module.BASE, Mode.TIMER).log(log, args);
@@ -256,6 +264,11 @@ public class Tracers {
     public static void toRuntimeProfile(RuntimeProfile profile) {
         Tracers tracers = THREAD_LOCAL.get();
         tracers.allTracer[1].toRuntimeProfile(profile);
+    }
+
+    public static Optional<Timer> getSpecifiedTimer(String name) {
+        Tracers tracers = THREAD_LOCAL.get();
+        return tracers.allTracer[1].getSpecifiedTimer(name);
     }
 
     public static String getTrace(Mode mode) {

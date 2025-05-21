@@ -46,8 +46,10 @@ import com.google.gson.annotations.SerializedName;
 import com.starrocks.analysis.BrokerDesc;
 import com.starrocks.analysis.TableRef;
 import com.starrocks.backup.Status.ErrCode;
+import com.starrocks.catalog.Catalog;
 import com.starrocks.catalog.Database;
 import com.starrocks.catalog.FsBroker;
+import com.starrocks.catalog.Function;
 import com.starrocks.catalog.LocalTablet;
 import com.starrocks.catalog.MaterializedIndex;
 import com.starrocks.catalog.MaterializedIndex.IndexExtState;
@@ -60,7 +62,7 @@ import com.starrocks.catalog.Table;
 import com.starrocks.catalog.Tablet;
 import com.starrocks.catalog.View;
 import com.starrocks.common.Config;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.common.io.DeepCopy;
 import com.starrocks.common.io.Text;
 import com.starrocks.common.util.TimeUtils;
@@ -70,6 +72,7 @@ import com.starrocks.common.util.concurrent.lock.Locker;
 import com.starrocks.fs.HdfsUtil;
 import com.starrocks.metric.MetricRepo;
 import com.starrocks.server.GlobalStateMgr;
+import com.starrocks.server.WarehouseManager;
 import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.task.AgentBatchTask;
 import com.starrocks.task.AgentTask;
@@ -82,6 +85,7 @@ import com.starrocks.thrift.TFinishTaskRequest;
 import com.starrocks.thrift.THdfsProperties;
 import com.starrocks.thrift.TStatusCode;
 import com.starrocks.thrift.TTaskType;
+import com.starrocks.warehouse.WarehouseIdleChecker;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -155,6 +159,11 @@ public class BackupJob extends AbstractJob {
 
     private boolean testPrimaryKey = false;
 
+    @SerializedName(value = "backupFunctions")
+    private List<Function> backupFunctions = Lists.newArrayList();
+    @SerializedName(value = "backupCatalogs")
+    private List<Catalog> backupCatalogs = Lists.newArrayList();
+
     public BackupJob() {
         super(JobType.BACKUP);
     }
@@ -178,6 +187,10 @@ public class BackupJob extends AbstractJob {
         return state;
     }
 
+    protected void setState(BackupJobState state) {
+        this.state = state;
+    }
+
     public BackupMeta getBackupMeta() {
         return backupMeta;
     }
@@ -196,6 +209,14 @@ public class BackupJob extends AbstractJob {
 
     public List<TableRef> getTableRef() {
         return tableRefs;
+    }
+
+    public void setBackupFunctions(List<Function> functions) {
+        this.backupFunctions = functions;
+    }
+
+    public void setBackupCatalogs(List<Catalog> backupCatalogs) {
+        this.backupCatalogs = backupCatalogs;
     }
 
     public synchronized boolean finishTabletSnapshotTask(SnapshotTask task, TFinishTaskRequest request) {
@@ -455,6 +476,14 @@ public class BackupJob extends AbstractJob {
 
     private void prepareAndSendSnapshotTask() {
         MetricRepo.COUNTER_UNFINISHED_BACKUP_JOB.increase(1L);
+        if (!backupCatalogs.isEmpty()) {
+            // short cut for external catalogs backup
+            backupMeta = new BackupMeta(Lists.newArrayList());
+            backupMeta.setCatalogs(backupCatalogs);
+            state = BackupJobState.SAVE_META;
+
+            return;
+        }
         Database db = globalStateMgr.getLocalMetastore().getDb(dbId);
         if (db == null) {
             status = new Status(ErrCode.NOT_FOUND, "database " + dbId + " does not exist");
@@ -541,6 +570,7 @@ public class BackupJob extends AbstractJob {
                 copiedTables.add(copiedTbl);
             }
             backupMeta = new BackupMeta(copiedTables);
+            backupMeta.setFunctions(backupFunctions);
         } finally {
             locker.unLockDatabase(db.getId(), LockType.READ);
         }
@@ -636,7 +666,7 @@ public class BackupJob extends AbstractJob {
                 BrokerDesc brokerDesc = new BrokerDesc(repo.getStorage().getProperties());
                 try {
                     HdfsUtil.getTProperties(repo.getLocation(), brokerDesc, hdfsProperties);
-                } catch (UserException e) {
+                } catch (StarRocksException e) {
                     status = new Status(ErrCode.COMMON_ERROR, "Get properties from " + repo.getLocation() + " error.");
                     return;
                 }
@@ -707,11 +737,9 @@ public class BackupJob extends AbstractJob {
             localMetaInfoFilePath = metaInfoFile.getAbsolutePath();
 
             // 3. save job info file
-            // save table info into BackupJobInfo only for OlapTable or MV
-            List<Table> olapTbls = backupMeta.getTables().values().stream()
-                                   .filter(Table::isOlapTableOrMaterializedView).collect(Collectors.toList());
-            jobInfo = BackupJobInfo.fromCatalog(createTime, label, dbName, dbId, olapTbls, snapshotInfos);
-            LOG.warn("job info: {}. {}", jobInfo, this);
+            jobInfo = BackupJobInfo.fromCatalog(createTime, label, dbName, dbId, backupMeta.getTables().values(),
+                    snapshotInfos);
+            LOG.debug("job info: {}. {}", jobInfo, this);
             File jobInfoFile = new File(jobDir, Repository.PREFIX_JOB_INFO + createTimeStr);
             if (!jobInfoFile.createNewFile()) {
                 status = new Status(ErrCode.COMMON_ERROR, "Failed to create job info file: " + jobInfoFile.toString());
@@ -777,6 +805,7 @@ public class BackupJob extends AbstractJob {
         LOG.info("job is finished. {}", this);
 
         MetricRepo.COUNTER_UNFINISHED_BACKUP_JOB.increase(-1L);
+        WarehouseIdleChecker.updateJobLastFinishTime(WarehouseManager.DEFAULT_WAREHOUSE_ID);
     }
 
     private boolean uploadFile(String localFilePath, String remoteFilePath) {
@@ -863,6 +892,7 @@ public class BackupJob extends AbstractJob {
 
         // log
         globalStateMgr.getEditLog().logBackupJob(this);
+        WarehouseIdleChecker.updateJobLastFinishTime(WarehouseManager.DEFAULT_WAREHOUSE_ID);
         LOG.info("finished to cancel backup job. current state: {}. {}", curState.name(), this);
     }
 

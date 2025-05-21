@@ -1,4 +1,4 @@
-setuptools<58.0.0
+setuptools
 cup==3.2.31
 nose~=1.3.7
 pynose==1.4.8
@@ -17,3 +17,6 @@ thrift-sasl
 PyHive
 timeout_decorator
 DBUtils
+adbc-driver-manager==1.2.0
+adbc-driver-flightsql==1.2.0
+pyarrow==17.0.0

@@ -649,15 +649,6 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：MySQL 服务器支持的 Backlog 队列长度。
 - 引入版本：-
 
-##### mysql_service_nio_enabled
-
-- 默认值：true
-- 类型：Boolean
-- 单位：-
-- 是否动态：否
-- 描述：是否开启 MySQL 服务器的异步 I/O 选项。
-- 引入版本：-
-
 ##### mysql_service_io_threads_num
 
 - 默认值：4
@@ -706,15 +697,6 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 单位：-
 - 是否动态：否
 - 描述：FE 支持的最大连接数，包括所有用户发起的连接。默认值由 v3.1.12、v3.2.7 起由 `1024` 变为 `4096`。
-- 引入版本：-
-
-##### max_connection_scheduler_threads_num
-
-- 默认值：4096
-- 类型：Int
-- 单位：-
-- 是否动态：否
-- 描述：连接调度器支持的最大线程数。
 - 引入版本：-
 
 ### 元数据与集群管理
@@ -775,7 +757,7 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 引入版本：-
 -->
 
-##### ignore_unknown_log_id
+##### metadata_ignore_unknown_operation_type
 
 - 默认值：false
 - 类型：Boolean
@@ -1136,6 +1118,15 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：是否为跨集群数据迁移开启旧版本兼容。新旧版本的集群间可能存在行为差异，从而导致跨集群数据迁移时出现问题。因此在数据迁移前，您需要为目标集群开启旧版本兼容，并在数据迁移完成后关闭。`true` 表示开启兼容。
 - 引入版本：v3.1.10, v3.2.6
 
+##### automated_cluster_snapshot_interval_seconds
+
+- 默认值：600
+- 类型：Int
+- 单位：秒
+- 是否动态：是
+- 描述：自动化集群快照任务的触发间隔。
+- 引入版本：v3.4.2
+
 ### 用户，角色及权限
 
 ##### privilege_max_total_roles_per_user
@@ -1214,7 +1205,7 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 
 ##### enable_backup_materialized_view
 
-- 默认值：true
+- 默认值：false
 - 类型：Boolean
 - 单位：-
 - 是否动态：是
@@ -1317,27 +1308,24 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：在激活失效物化视图时是否严格检查数据类型长度一致性。当设置为 `false` 时，如基表的数据类型长度有变化，也不影响物化视图的激活。
 - 引入版本：v3.3.4
 
-<!--
 ##### mv_active_checker_interval_seconds
 
 - 默认值：60
 - 类型：Long
 - 单位：Seconds
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述：当开启后台 active_checker 线程后，系统将定期自动检查并激活因基表（或视图）发生 Schema 变更或重建而变为失效状态（Inactive）的物化视图。该参数用于控制该线程的调度执行间隔，单位为秒。默认值为系统设定的时间间隔。
+- 引入版本：v3.1.6
 
-<!--
 ##### default_mv_partition_refresh_number
 
 - 默认值：1
 - 类型：Int
 - 单位：-
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述： 当一次物化视图刷新涉及多个分区时，该参数用于控制默认每次刷新多少个分区。
+从 3.3.0 版本开始，系统默认每次仅刷新一个分区，以避免内存占用过高的问题；而在此前的版本中，系统会尝试一次性刷新所有分区，这可能导致刷新任务因内存不足（OOM）而失败。但也需注意：当每次物化视图刷新涉及大量分区时，默认每次仅刷新一个分区可能导致调度频繁、整体刷新耗时较长，甚至生成过多的刷新记录。因此，在特定场景下，可适当调整该参数值，以提升刷新效率并控制调度开销。
+- 引入版本：v3.3.0
 
 <!--
 ##### mv_auto_analyze_async
@@ -1750,7 +1738,7 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 类型：Long
 - 单位：bytes
 - 是否动态：是
-- 描述：自动统计信息采集的最大分区大小。如果超过该值，则放弃全量采集，转为对该表进行抽样采集。
+- 描述：自动统计信息采集的单次任务最大数据量。如果超过该值，则放弃全量采集，转为对该表进行抽样采集。
 - 引入版本：-
 
 ##### statistic_collect_max_row_count_per_query
@@ -1807,6 +1795,60 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：直方图最大采样行数。
 - 引入版本：-
 
+##### connector_table_query_trigger_task_schedule_interval
+
+- 默认值：30
+- 类型：Int
+- 单位：秒
+- 是否动态：是
+- 描述：Schedule 线程调度查询触发的后台任务的周期。该项用于取代 v3.4.0 中引入的 `connector_table_query_trigger_analyze_schedule_interval`。此处后台任务是指 v3.4 中的 `ANALYZE` 任务，以及 v3.4 之后版本中引入的低基数列字典的收集任务。
+- 引入版本：v3.4.2
+
+##### connector_table_query_trigger_analyze_small_table_rows
+
+- 默认值：10000000
+- 类型：Int
+- 单位：-
+- 是否动态：是
+- 描述：查询触发 ANALYZE 任务的小表阈值。
+- 引入版本：v3.4.0
+
+##### connector_table_query_trigger_analyze_small_table_interval
+
+- 默认值：2 * 3600
+- 类型：Int
+- 单位：秒
+- 是否动态：是
+- 描述：查询触发 ANALYZE 任务的小表采集间隔。
+- 引入版本：v3.4.0
+
+##### connector_table_query_trigger_analyze_large_table_interval
+
+- 默认值：12 * 3600
+- 类型：Int
+- 单位：秒
+- 是否动态：是
+- 描述：查询触发 ANALYZE 任务的大表采集间隔。
+- 引入版本：v3.4.0
+
+##### connector_table_query_trigger_analyze_max_pending_task_num
+
+- 默认值：100
+- 类型：Int
+- 单位：-
+- 是否动态：是
+- 描述：FE 中处于 Pending 状态的查询触发 ANALYZE 任务的最大数量。
+- 引入版本：v3.4.0
+
+##### connector_table_query_trigger_analyze_max_running_task_num
+
+- 默认值：2
+- 类型：Int
+- 单位：-
+- 是否动态：是
+- 描述：FE 中处于 Running 状态的查询触发 ANALYZE 任务的最大数量。
+- 引入版本：v3.4.0
+
 ##### enable_local_replica_selection
 
 - 默认值：false
@@ -1824,6 +1866,24 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 是否动态：是
 - 描述：: 分区裁剪允许的最大递归深度。增加递归深度可以裁剪更多元素但同时增加 CPU 资源消耗。
 - 引入版本：-
+
+##### slow_query_analyze_threshold
+
+- 默认值：5
+- 类型：Int
+- 单位：秒
+- 是否动态：是
+- 描述：查询触发 Query Feedback 分析的执行时间阈值。
+- 引入版本：v3.4.0
+
+##### low_cardinality_threshold
+
+- 默认值：255
+- 类型：Int
+- 单位：-
+- 是否动态：否
+- 描述：低基数字典阈值。
+- 引入版本：v3.5.0
 
 ### 导入导出
 
@@ -2768,6 +2828,15 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：FE 向每个 BE 请求收集 Tablet 统计信息的时间间隔。
 - 引入版本：-
 
+##### max_automatic_partition_number
+
+- 默认值：4096
+- 类型：Int
+- 单位：-
+- 是否动态：是
+- 描述：系统自动创建分区数量上限。
+- 引入版本：v3.1
+
 ##### auto_partition_max_creation_number_per_load
 
 - 默认值：4096
@@ -2854,16 +2923,16 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 描述：云原生元数据服务监听端口。
 - 引入版本：-
 
-<!--
+
 ##### enable_load_volume_from_conf
 
-- 默认值：true
+- 默认值：false
 - 类型：Boolean
 - 单位：-
 - 是否动态：否
-- 描述：
-- 引入版本：-
--->
+- 描述：是否允许 StarRocks 使用 FE 配置文件中指定的存储相关属性创建默认存储卷。自 v3.4.1 起，默认值由 `true` 变为 `false`。
+- 引入版本：v3.1.0
+
 
 ##### cloud_native_storage_type
 
@@ -2871,7 +2940,7 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 - 类型：String
 - 单位：-
 - 是否动态：否
-- 描述：您使用的存储类型。在存算分离模式下，StarRocks 支持将数据存储在 HDFS 、Azure Blob（自 v3.1.1 起支持）、以及兼容 S3 协议的对象存储中（例如 AWS S3、Google GCP、阿里云 OSS 以及 MinIO）。有效值：`S3`（默认）、`AZBLOB` 和 `HDFS`。如果您将此项指定为 `S3`，则必须添加以 `aws_s3` 为前缀的配置项。如果您将此项指定为 `AZBLOB`，则必须添加以 `azure_blob` 为前缀的配置项。如果将此项指定为 `HDFS`，则只需指定 `cloud_native_hdfs_url`。
+- 描述：您使用的存储类型。在存算分离模式下，StarRocks 支持将数据存储在 HDFS 、Azure Blob（自 v3.1.1 起支持）、Azure Data Lake Storage Gen2（自 v3.4.1 起支持）、以及兼容 S3 协议的对象存储中（例如 AWS S3、Google GCP、阿里云 OSS 以及 MinIO）。有效值：`S3`（默认）、`AZBLOB`、`ADLS2` 和 `HDFS`。如果您将此项指定为 `S3`，则必须添加以 `aws_s3` 为前缀的配置项。如果您将此项指定为 `AZBLOB`，则必须添加以 `azure_blob` 为前缀的配置项。如果您将此项指定为 `ADLS2`，则必须添加以 `azure_adls2` 为前缀的配置项。如果将此项指定为 `HDFS`，则只需指定 `cloud_native_hdfs_url`。
 - 引入版本：-
 
 ##### cloud_native_hdfs_url
@@ -3124,11 +3193,11 @@ Compaction Score 代表了一个表分区是否值得进行 Compaction 的评分
 
 ##### lake_enable_ingest_slowdown
 
-- 默认值：false
+- 默认值：true
 - 类型：Boolean
 - 单位：-
 - 是否动态：是
-- 描述：是否为存算分离集群开启导入限速功能。开启导入限速功能后，当某个表分区的 Compaction Score 超过了 `lake_ingest_slowdown_threshold`，该表分区上的导入任务将会被限速。只有当 `run_mode` 设置为 `shared_data` 后，该配置项才会生效。
+- 描述：是否为存算分离集群开启导入限速功能。开启导入限速功能后，当某个表分区的 Compaction Score 超过了 `lake_ingest_slowdown_threshold`，该表分区上的导入任务将会被限速。只有当 `run_mode` 设置为 `shared_data` 后，该配置项才会生效。自 v3.3.6 起，默认值由 `false` 变为 `true`。
 - 引入版本：v3.2.0
 
 ##### lake_ingest_slowdown_threshold
@@ -3164,11 +3233,11 @@ Compaction Score 代表了一个表分区是否值得进行 Compaction 的评分
 
 ##### lake_compaction_score_upper_bound
 
-- 默认值：0
+- 默认值：2000
 - 类型：Long
 - 单位：-
 - 是否动态：是
-- 描述：表分区的 Compaction Score 的上限, `0` 表示没有上限。只有当 `lake_enable_ingest_slowdown` 设置为 `true` 后，该配置项才会生效。当表分区 Compaction Score 达到或超过该上限后，所有涉及到该分区的导入任务将会被无限延迟提交，直到 Compaction Score 降到该值以下或者任务超时。
+- 描述：表分区的 Compaction Score 的上限, `0` 表示没有上限。只有当 `lake_enable_ingest_slowdown` 设置为 `true` 后，该配置项才会生效。当表分区 Compaction Score 达到或超过该上限后，新的导入会被拒绝。自 v3.3.6 起，默认值由 `0` 变为 `2000`。
 - 引入版本：v3.2.0
 
 ##### lake_compaction_disable_tables
@@ -4718,38 +4787,52 @@ Compaction Score 代表了一个表分区是否值得进行 Compaction 的评分
 - 引入版本：-
 -->
 
-<!--
 ##### mv_plan_cache_expire_interval_sec
 
 - 默认值：24 * 60 * 60
 - 类型：Long
 - 单位：Seconds
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述：用于MV Plan缓存过期时间间隔（单位：秒），默认一天。
+- 引入版本： v3.2
 
-<!--
+##### mv_plan_cache_thread_pool_size
+
+- 默认值：3
+- 类型：Int
+- Unit:
+- 是否动态：是
+- 描述：用于物化视图改写的 MV 计划缓存的默认线程池大小，默认3个。
+- 引入版本： v3.2
+
 ##### mv_plan_cache_max_size
 
 - 默认值：1000
 - 类型：Long
 - Unit:
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述：用于物化视图改写的 MV 计划缓存的最大大小。如果存在大量用于透明改写的物化视图，可以考虑增加此配置项的大小。默认1000个。
+- 引入版本： v3.2
 
-<!--
+
+##### enable_mv_query_context_cache
+
+- 默认值：true
+- 类型：Boolean
+- Unit:
+- 是否动态：是
+- 描述：是否开启Query级别的用于透明加速改写的物化视图Cache，用于加速改写性能。
+- 引入版本： v3.3
+
+
 ##### mv_query_context_cache_max_size
 
 - 默认值：1000
 - 类型：Long
 - Unit:
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述： 单个查询生命周期内，物化视图改写缓存的最大大小。该缓存可以避免重复计算，从而减少优化器在物化视图改写阶段的耗时，但可能会占用一定的前端（FE）内存。当存在较多相关物化视图（超过 10 个）或查询较为复杂（如多表关联）时，该配置将带来更好的性能表现。
+- 引入版本： v3.3
 
 <!--
 ##### port_connectivity_check_interval_sec
@@ -4968,3 +5051,107 @@ Compaction Score 代表了一个表分区是否值得进行 Compaction 的评分
 - 描述：
 - 引入版本：-
 -->
+
+##### mv_refresh_fail_on_filter_data
+- 默认值：true
+- 类型：布尔值
+- 单位：-
+- 是否动态：是
+- 描述：当物化视图刷新过程中存在被过滤的数据时，刷新会失败（默认值为 true）。如果设置为 false，则会忽略被过滤的数据并返回刷新成功。
+- 引入版本：-
+
+##### mv_create_partition_batch_interval_ms
+- 默认值：1000
+- 类型：布尔值
+- 单位：ms
+- 是否动态：是
+- 描述：在物化视图刷新时，如果需要一次性创建多个分区，系统将每 64 个分区划分为一个批次进行创建。为了降低因频繁创建导致失败的风险，系统在不同批次之间设置了默认的间隔时间（单位为毫秒），用于控制创建频率。
+- 引入版本：v3.3
+
+##### max_mv_refresh_failure_retry_times
+- 默认值：1
+- 类型：整数
+- 单位：-
+- 是否动态：是
+- 描述：物化视图刷新失败时的最大重试次数。
+- 引入版本：v3.3.0
+
+##### max_mv_refresh_try_lock_failure_retry_times
+- 默认值：3
+- 类型：整数
+- 单位：-
+- 是否动态：是
+- 描述：物化视图刷新过程中尝试加锁失败时的最大重试次数。
+- 引入版本：v3.3.0
+
+##### mv_refresh_try_lock_timeout_ms
+- 默认值：30000
+- 类型：整数
+- 单位：ms
+- 是否动态：是
+- 描述：物化视图刷新尝试获取基表或物化视图数据库锁的默认超时时间（单位为毫秒）。
+- 引入版本：v3.3.0
+
+##### enable_mv_refresh_collect_profile
+- 默认值：false
+- 类型：布尔值
+- 单位：-
+- 是否动态：是
+- 描述：是否为所有物化视图默认启用刷新时的 Profile 信息收集。
+- 引入版本：v3.3.0
+
+##### max_mv_task_run_meta_message_values_length
+- 默认值：16
+- 类型：整数
+- 单位：-
+- 是否动态：是
+- 描述：控制物化视图任务运行时附加信息中 set/map 类型字段值的最大长度，避免占用过多元数据内存。
+- 引入版本：v3.3.0
+
+##### max_mv_check_base_table_change_retry_times
+- 默认值：10
+- 类型：整数
+- 单位：-
+- 是否动态：是
+- 描述：刷新物化视图时，检测基表变更的最大重试次数。
+- 引入版本：v3.3.0
+
+##### mv_refresh_default_planner_optimize_timeout
+- 默认值：30000
+- 类型：整数
+- 单位：ms
+- 是否动态：是
+- 描述：刷新物化视图时优化器规划阶段的默认超时时间（单位为毫秒），默认 30 秒。
+- 引入版本：v3.3.0
+
+##### enable_mv_refresh_query_rewrite
+- 默认值：false
+- 类型：布尔值
+- 单位：-
+- 是否动态：是
+- 描述：是否开启物化视图刷新时的查询改写功能，从而可以使用重写后的物化视图代替原始基表以提升性能。
+- 引入版本：v3.3.0
+
+##### mv_create_partition_batch_interval_ms
+- 默认值：1000
+- 类型：布尔值
+- 单位：ms
+- 是否动态：是
+- 描述：在物化视图刷新时，如果需要一次性创建多个分区，系统将每 64 个分区划分为一个批次进行创建。为了降低因频繁创建导致失败的风险，系统在不同批次之间设置了默认的间隔时间（单位为毫秒），用于控制创建频率。
+- 引入版本：v3.3.0
+
+##### enable_mv_refresh_extra_prefix_logging
+- 默认值：true
+- 类型：布尔值
+- 单位：-
+- 是否动态：是
+- 描述：是否启用附加物化视图名称前缀的日志记录，用于提升调试能力。
+- 引入版本：v3.4.0
+
+##### enable_mv_post_image_reload_cache
+- 默认值：true
+- 类型：布尔值
+- 单位：-
+- 是否动态：是
+- 描述：FE 加载镜像后是否进行重载标志检测。如果某个 Base MV 已完成重载，其他依赖它的 MV 则无需再次重载。
+- 引入版本：v3.5.0

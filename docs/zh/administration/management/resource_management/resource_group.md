@@ -21,7 +21,7 @@ keywords: ['fuzai', 'ziyuan', 'ziyuanzu']
 | 2.3         | √     | √     | √        | ×                 | ×                      | ×                                               | x         |
 | 2.5         | √     | √     | √        | √                 | ×                      | ×                                               | x         |
 | 3.1 & 3.2   | √     | √     | √        | √                 | √                      | ×                                               | x         |
-| 3.3.5 及以后 | √     | √     | √        | √                 | √                      | √                                               | √         |
+| 3.3.5 及以后 | √     | √     | √        | √                 | √                      | ×                                               | √         |
 
 ## 基本概念
 
@@ -226,12 +226,6 @@ SET enable_pipeline_engine = true;
 SET GLOBAL enable_pipeline_engine = true;
 ```
 
-对于导入任务，还需要开启 FE 配置项 `enable_pipeline_load` 来为导入任务启用 Pipeline 引擎。该参数自 v2.5.0 起支持。
-
-```sql
-ADMIN SET FRONTEND CONFIG ("enable_pipeline_load" = "true");
-```
-
 > **说明**
 >
 > 自 v3.1.0 起，默认启用资源组功能。会话变量 `enable_resource_group` 弃用。
@@ -422,7 +416,7 @@ ALTER RESOURCE GROUP <group_name> DROP ALL;
 
 ### 查看资源组的使用信息
 
-从 v3.1.4 版本开始，StarRocks 支持 SQL 语句 [SHOW USAGE RESOURCE GROUPS](../../../sql-reference/sql-statements/cluster-management/nodes_processes/SHOW_RUNNING_QUERIES.md)，用以展示每个资源组在各个 BE 上的使用信息。各个字段的含义如下：
+从 v3.1.4 版本开始，StarRocks 支持 SQL 语句 [SHOW USAGE RESOURCE GROUPS](../../../sql-reference/sql-statements/cluster-management/resource_group/SHOW_USAGE_RESOURCE_GROUPS.md)，用以展示每个资源组在各个 BE 上的使用信息。各个字段的含义如下：
 
 - `Name`：资源组的名称。
 - `Id`：资源组的 ID。

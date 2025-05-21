@@ -45,7 +45,7 @@ import com.starrocks.catalog.Table;
 import com.starrocks.common.DdlException;
 import com.starrocks.common.LoadException;
 import com.starrocks.common.MetaNotFoundException;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.common.jmockit.Deencapsulation;
 import com.starrocks.load.BrokerFileGroup;
 import com.starrocks.load.BrokerFileGroupAggInfo;
@@ -55,6 +55,7 @@ import com.starrocks.load.EtlStatus;
 import com.starrocks.load.FailMsg;
 import com.starrocks.metric.MetricRepo;
 import com.starrocks.persist.EditLog;
+import com.starrocks.qe.ConnectContext;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.sql.ast.AlterLoadStmt;
 import com.starrocks.sql.ast.DataDescription;
@@ -338,7 +339,8 @@ public class BrokerLoadJobTest {
                                          @Injectable boolean txnOperated,
                                          @Injectable String txnStatusChangeReason,
                                          @Mocked LeaderTaskExecutor leaderTaskExecutor,
-                                         @Mocked GlobalTransactionMgr globalTransactionMgr) throws LoadException, UserException {
+                                         @Mocked GlobalTransactionMgr globalTransactionMgr) throws LoadException,
+            StarRocksException {
         new Expectations() {
             {
                 globalTransactionMgr.beginTransaction(anyLong, Lists.newArrayList(), anyString, (TUniqueId) any,
@@ -386,9 +388,17 @@ public class BrokerLoadJobTest {
         brokerLoadJob2.unprotectedExecuteJob();
         txnOperated = true;
         txnStatusChangeReason = "broker load job timeout";
+        ConnectContext context = new ConnectContext();
+        context.setStartTime();
+        brokerLoadJob2.setConnectContext(context);
+        long createTimestamp = context.getStartTime() - 1;
+        brokerLoadJob2.createTimestamp = createTimestamp;
+        brokerLoadJob2.timeoutSecond = 0;
         brokerLoadJob2.afterAborted(txnState, txnOperated, txnStatusChangeReason);
         idToTasks = Deencapsulation.getField(brokerLoadJob2, "idToTasks");
         Assert.assertEquals(1, idToTasks.size());
+        Assert.assertTrue(brokerLoadJob2.createTimestamp > createTimestamp);
+        Assert.assertEquals(brokerLoadJob2.createTimestamp, context.getStartTime());
 
         // test when txnOperated is false
         BrokerLoadJob brokerLoadJob3 = new BrokerLoadJob();
@@ -411,7 +421,7 @@ public class BrokerLoadJobTest {
         idToTasks = Deencapsulation.getField(brokerLoadJob4, "idToTasks");
         Assert.assertEquals(1, idToTasks.size());
 
-        // test that timeout happens in loadin task before the job timeout
+        // test that timeout happens in loading task before the job timeout
         BrokerLoadJob brokerLoadJob5 = new BrokerLoadJob();
         new Expectations() {
             {
@@ -426,6 +436,17 @@ public class BrokerLoadJobTest {
         brokerLoadJob5.afterAborted(txnState, txnOperated, txnStatusChangeReason);
         idToTasks = Deencapsulation.getField(brokerLoadJob5, "idToTasks");
         Assert.assertEquals(1, idToTasks.size());
+
+        // test parse error, should not retry
+        BrokerLoadJob brokerLoadJob6 = new BrokerLoadJob();
+        brokerLoadJob6.retryTime = 1;
+        brokerLoadJob6.unprotectedExecuteJob();
+        txnOperated = true;
+        txnStatusChangeReason = "parse error, task failed";
+        brokerLoadJob6.afterAborted(txnState, txnOperated, txnStatusChangeReason);
+        Assert.assertEquals(JobState.CANCELLED, brokerLoadJob6.getState());
+        idToTasks = Deencapsulation.getField(brokerLoadJob6, "idToTasks");
+        Assert.assertEquals(0, idToTasks.size());
     }
 
     @Test
@@ -447,7 +468,7 @@ public class BrokerLoadJobTest {
     }
 
     @Test
-    public void testTaskOnResourceGroupTaskFailed(@Injectable long taskId, @Injectable FailMsg failMsg) {
+    public void testTaskFailedUserCancelType(@Injectable long taskId, @Injectable FailMsg failMsg) {
         GlobalStateMgr.getCurrentState().setEditLog(new EditLog(new ArrayBlockingQueue<>(100)));
         new MockUp<EditLog>() {
             @Mock
@@ -466,7 +487,7 @@ public class BrokerLoadJobTest {
 
     @Test
     public void testTaskAbortTransactionOnTimeoutFailure(@Mocked GlobalTransactionMgr globalTransactionMgr,
-            @Injectable long taskId, @Injectable FailMsg failMsg) throws UserException {
+            @Injectable long taskId, @Injectable FailMsg failMsg) throws StarRocksException {
         new Expectations() {
             {
                 globalTransactionMgr.abortTransaction(anyLong, anyLong, anyString);
@@ -482,7 +503,7 @@ public class BrokerLoadJobTest {
             {
                 globalTransactionMgr.abortTransaction(anyLong, anyLong, anyString);
                 times = 1;
-                result = new UserException("Artificial exception");
+                result = new StarRocksException("Artificial exception");
             }
         };
 
@@ -712,7 +733,7 @@ public class BrokerLoadJobTest {
         TxnStateChangeCallback callback = globalTxnMgr.getCallbackFactory().getCallback(1);
         Assert.assertNotNull(callback);
 
-        // 2. The job will be discard when failure isn't timeout
+        // 2. The job will be discard when parse error
         new Expectations() {
             {
                 txnState.getTxnCommitAttachment();
@@ -720,7 +741,7 @@ public class BrokerLoadJobTest {
                 result = attachment;
                 txnState.getReason();
                 minTimes = 0;
-                result = "load_run_fail";
+                result = "parse error";
             }
         };
         brokerLoadJob.replayOnAborted(txnState);
@@ -763,7 +784,7 @@ public class BrokerLoadJobTest {
                                        @Injectable LoadTask loadTask1,
                                        @Mocked GlobalStateMgr globalStateMgr,
                                        @Injectable Database database,
-                                       @Mocked GlobalTransactionMgr transactionMgr) throws UserException {
+                                       @Mocked GlobalTransactionMgr transactionMgr) throws StarRocksException {
         BrokerLoadJob brokerLoadJob = new BrokerLoadJob();
         Deencapsulation.setField(brokerLoadJob, "state", JobState.LOADING);
         Map<Long, LoadTask> idToTasks = Maps.newHashMap();

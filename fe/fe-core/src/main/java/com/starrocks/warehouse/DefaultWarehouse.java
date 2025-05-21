@@ -14,9 +14,16 @@
 
 package com.starrocks.warehouse;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.starrocks.common.DdlException;
+import com.starrocks.common.ErrorCode;
+import com.starrocks.common.ErrorReport;
+import com.starrocks.common.proc.BaseProcResult;
+import com.starrocks.common.proc.ProcResult;
 import com.starrocks.lake.StarOSAgent;
+import com.starrocks.system.ComputeNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +51,24 @@ public class DefaultWarehouse extends Warehouse {
     }
 
     @Override
+    public void addNodeToCNGroup(ComputeNode node, String cnGroupName) throws DdlException {
+        if (!Strings.isNullOrEmpty(cnGroupName)) {
+            // NOTE: NOT IMPLEMENTED, so the cnGroupName must be empty!
+            ErrorReport.reportDdlException(ErrorCode.ERR_CNGROUP_NOT_IMPLEMENTED);
+        }
+        node.setWorkerGroupId(StarOSAgent.DEFAULT_WORKER_GROUP_ID);
+        node.setWarehouseId(getId());
+    }
+
+    @Override
+    public void validateRemoveNodeFromCNGroup(ComputeNode node, String cnGroupName) throws DdlException {
+        if (!Strings.isNullOrEmpty(cnGroupName)) {
+            // NOTE: NOT IMPLEMENTED, so the cnGroupName must be empty!
+            ErrorReport.reportDdlException(ErrorCode.ERR_CNGROUP_NOT_IMPLEMENTED);
+        }
+    }
+
+    @Override
     public List<String> getWarehouseInfo() {
         return Lists.newArrayList(
                 String.valueOf(getId()),
@@ -58,11 +83,22 @@ public class DefaultWarehouse extends Warehouse {
                 "",
                 "",
                 "",
+                "",
                 comment);
     }
 
     @Override
     public List<List<String>> getWarehouseNodesInfo() {
         return new ArrayList<>();
+    }
+
+    @Override
+    public ProcResult fetchResult() {
+        return new BaseProcResult();
+    }
+
+    @Override
+    public long getResumeTime() {
+        return -1L;
     }
 }

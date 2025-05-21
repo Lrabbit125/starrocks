@@ -19,14 +19,16 @@ import com.google.common.collect.Lists;
 import com.starrocks.alter.SystemHandler;
 import com.starrocks.analysis.FunctionName;
 import com.starrocks.analysis.ParseNode;
+import com.starrocks.authentication.AuthenticationMgr;
 import com.starrocks.catalog.Database;
 import com.starrocks.common.AlreadyExistsException;
 import com.starrocks.common.Config;
+import com.starrocks.common.ConfigBase;
 import com.starrocks.common.DdlException;
 import com.starrocks.common.ErrorCode;
 import com.starrocks.common.ErrorReport;
 import com.starrocks.common.MetaNotFoundException;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.datacache.DataCacheMgr;
 import com.starrocks.datacache.DataCacheSelectExecutor;
 import com.starrocks.datacache.DataCacheSelectMetrics;
@@ -41,6 +43,8 @@ import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.sql.ast.AdminCancelRepairTableStmt;
 import com.starrocks.sql.ast.AdminCheckTabletsStmt;
 import com.starrocks.sql.ast.AdminRepairTableStmt;
+import com.starrocks.sql.ast.AdminSetAutomatedSnapshotOffStmt;
+import com.starrocks.sql.ast.AdminSetAutomatedSnapshotOnStmt;
 import com.starrocks.sql.ast.AdminSetConfigStmt;
 import com.starrocks.sql.ast.AdminSetPartitionVersionStmt;
 import com.starrocks.sql.ast.AdminSetReplicaStatusStmt;
@@ -134,13 +138,27 @@ import com.starrocks.sql.ast.SubmitTaskStmt;
 import com.starrocks.sql.ast.SyncStmt;
 import com.starrocks.sql.ast.TruncateTableStmt;
 import com.starrocks.sql.ast.UninstallPluginStmt;
+import com.starrocks.sql.ast.group.CreateGroupProviderStmt;
+import com.starrocks.sql.ast.group.DropGroupProviderStmt;
+import com.starrocks.sql.ast.integration.AlterSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.CreateSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.DropSecurityIntegrationStatement;
 import com.starrocks.sql.ast.pipe.AlterPipeStmt;
 import com.starrocks.sql.ast.pipe.CreatePipeStmt;
 import com.starrocks.sql.ast.pipe.DropPipeStmt;
+import com.starrocks.sql.ast.spm.ControlBaselinePlanStmt;
+import com.starrocks.sql.ast.spm.CreateBaselinePlanStmt;
+import com.starrocks.sql.ast.spm.DropBaselinePlanStmt;
+import com.starrocks.sql.ast.warehouse.AlterWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.CreateWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.DropWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.ResumeWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.SuspendWarehouseStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.AlterCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.CreateCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.DropCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.EnableDisableCnGroupStmt;
+import com.starrocks.sql.spm.SPMStmtExecutor;
 import com.starrocks.statistic.AnalyzeJob;
 import com.starrocks.statistic.ExternalAnalyzeJob;
 import com.starrocks.statistic.NativeAnalyzeJob;
@@ -177,7 +195,8 @@ public class DDLStmtExecutor {
             } else if (re.getCause() instanceof IOException) {
                 throw (IOException) re.getCause();
             } else if (re.getCause() != null) {
-                throw new DdlException(re.getCause().getMessage(), re);
+                throw new DdlException(re.getCause().getMessage() != null ?
+                        re.getCause().getMessage() : re.getMessage(), re);
             } else {
                 throw re;
             }
@@ -227,7 +246,7 @@ public class DDLStmtExecutor {
                 String dbName = stmt.getDbName();
                 boolean isForceDrop = stmt.isForceDrop();
                 try {
-                    context.getGlobalStateMgr().getMetadataMgr().dropDb(catalogName, dbName, isForceDrop);
+                    context.getGlobalStateMgr().getMetadataMgr().dropDb(context, catalogName, dbName, isForceDrop);
                 } catch (MetaNotFoundException e) {
                     if (stmt.isSetIfExists()) {
                         LOG.info("drop database[{}] which does not exist", dbName);
@@ -279,7 +298,7 @@ public class DDLStmtExecutor {
         @Override
         public ShowResultSet visitCreateTableStatement(CreateTableStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
-                context.getGlobalStateMgr().getMetadataMgr().createTable(stmt);
+                context.getGlobalStateMgr().getMetadataMgr().createTable(context, stmt);
             });
             return null;
         }
@@ -295,7 +314,7 @@ public class DDLStmtExecutor {
         @Override
         public ShowResultSet visitCreateTableLikeStatement(CreateTableLikeStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
-                context.getGlobalStateMgr().getMetadataMgr().createTableLike(stmt);
+                context.getGlobalStateMgr().getMetadataMgr().createTableLike(context, stmt);
             });
             return null;
         }
@@ -408,7 +427,7 @@ public class DDLStmtExecutor {
         @Override
         public ShowResultSet visitAlterViewStatement(AlterViewStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
-                context.getGlobalStateMgr().getLocalMetastore().alterView(stmt);
+                context.getGlobalStateMgr().getMetadataMgr().alterView(stmt);
             });
             return null;
         }
@@ -580,6 +599,55 @@ public class DDLStmtExecutor {
         }
 
         @Override
+        public ShowResultSet visitCreateSecurityIntegrationStatement(CreateSecurityIntegrationStatement stmt,
+                                                                     ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                AuthenticationMgr authenticationMgr = GlobalStateMgr.getCurrentState().getAuthenticationMgr();
+                authenticationMgr.createSecurityIntegration(stmt.getName(), stmt.getPropertyMap(), false);
+            });
+
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitAlterSecurityIntegrationStatement(AlterSecurityIntegrationStatement stmt,
+                                                                    ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                AuthenticationMgr authenticationMgr = GlobalStateMgr.getCurrentState().getAuthenticationMgr();
+                authenticationMgr.alterSecurityIntegration(stmt.getName(), stmt.getProperties(), false);
+            });
+
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitDropSecurityIntegrationStatement(DropSecurityIntegrationStatement stmt,
+                                                                   ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                AuthenticationMgr authenticationMgr = GlobalStateMgr.getCurrentState().getAuthenticationMgr();
+                authenticationMgr.dropSecurityIntegration(stmt.getName(), false);
+            });
+
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitCreateGroupProviderStatement(CreateGroupProviderStmt statement, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                AuthenticationMgr authenticationMgr = GlobalStateMgr.getCurrentState().getAuthenticationMgr();
+                authenticationMgr.createGroupProviderStatement(statement, context);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitDropGroupProviderStatement(DropGroupProviderStmt statement, ConnectContext context) {
+            AuthenticationMgr authenticationMgr = GlobalStateMgr.getCurrentState().getAuthenticationMgr();
+            authenticationMgr.dropGroupProviderStatement(statement, context);
+            return null;
+        }
+
+        @Override
         public ShowResultSet visitSetUserPropertyStatement(SetUserPropertyStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
                 context.getGlobalStateMgr().getAuthenticationMgr().updateUserProperty(stmt.getUser(),
@@ -730,7 +798,7 @@ public class DDLStmtExecutor {
         @Override
         public ShowResultSet visitAdminSetConfigStatement(AdminSetConfigStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
-                context.getGlobalStateMgr().getNodeMgr().setConfig(stmt);
+                ConfigBase.setConfig(stmt);
                 if (stmt.getConfig().containsKey("mysql_server_version")) {
                     String version = stmt.getConfig().getMap().get("mysql_server_version");
                     if (!Strings.isNullOrEmpty(version)) {
@@ -866,16 +934,18 @@ public class DDLStmtExecutor {
                 }
                 context.getGlobalStateMgr().getAnalyzeMgr().addAnalyzeJob(analyzeJob);
 
-                ConnectContext statsConnectCtx = StatisticUtils.buildConnectContext();
-                // from current session, may execute analyze stmt
-                statsConnectCtx.getSessionVariable().setStatisticCollectParallelism(
-                        context.getSessionVariable().getStatisticCollectParallelism());
-                Thread thread = new Thread(() -> {
-                    statsConnectCtx.setThreadLocalInfo();
-                    StatisticExecutor statisticExecutor = new StatisticExecutor();
-                    analyzeJob.run(statsConnectCtx, statisticExecutor);
-                });
-                thread.start();
+                if (Config.enable_trigger_analyze_job_immediate) {
+                    ConnectContext statsConnectCtx = StatisticUtils.buildConnectContext();
+                    // from current session, may execute analyze stmt
+                    statsConnectCtx.getSessionVariable().setStatisticCollectParallelism(
+                            context.getSessionVariable().getStatisticCollectParallelism());
+                    Thread thread = new Thread(() -> {
+                        statsConnectCtx.setThreadLocalInfo();
+                        StatisticExecutor statisticExecutor = new StatisticExecutor();
+                        analyzeJob.run(statsConnectCtx, statisticExecutor);
+                    });
+                    thread.start();
+                }
             });
             return null;
         }
@@ -890,7 +960,7 @@ public class DDLStmtExecutor {
         @Override
         public ShowResultSet visitRefreshTableStatement(RefreshTableStmt stmt, ConnectContext context) {
             ErrorReport.wrapWithRuntimeException(() -> {
-                context.getGlobalStateMgr().refreshExternalTable(stmt);
+                context.getGlobalStateMgr().refreshExternalTable(context, stmt);
             });
             return null;
         }
@@ -965,7 +1035,7 @@ public class DDLStmtExecutor {
         public ShowResultSet visitSubmitTaskStatement(SubmitTaskStmt stmt, ConnectContext context) {
             try {
                 return context.getGlobalStateMgr().getTaskManager().handleSubmitTaskStmt(stmt);
-            } catch (UserException e) {
+            } catch (StarRocksException e) {
                 throw new RuntimeException(e);
             }
         }
@@ -1174,6 +1244,92 @@ public class DDLStmtExecutor {
             });
             return null;
         }
-    }
 
+        @Override
+        public ShowResultSet visitAlterWarehouseStatement(AlterWarehouseStmt stmt, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                WarehouseManager warehouseMgr = context.getGlobalStateMgr().getWarehouseMgr();
+                warehouseMgr.alterWarehouse(stmt);
+            });
+            return null;
+        }
+
+        //=========================================== CNGroup Statement ==================================================
+        @Override
+        public ShowResultSet visitCreateCNGroupStatement(CreateCnGroupStmt stmt, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                WarehouseManager warehouseMgr = context.getGlobalStateMgr().getWarehouseMgr();
+                warehouseMgr.createCnGroup(stmt);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitDropCNGroupStatement(DropCnGroupStmt stmt, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                WarehouseManager warehouseMgr = context.getGlobalStateMgr().getWarehouseMgr();
+                warehouseMgr.dropCnGroup(stmt);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitEnableDisableCNGroupStatement(EnableDisableCnGroupStmt stmt, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                WarehouseManager warehouseMgr = context.getGlobalStateMgr().getWarehouseMgr();
+                if (stmt.isSetEnable()) {
+                    warehouseMgr.enableCnGroup(stmt);
+                } else {
+                    warehouseMgr.disableCnGroup(stmt);
+                }
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitAlterCNGroupStatement(AlterCnGroupStmt stmt, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                WarehouseManager warehouseMgr = context.getGlobalStateMgr().getWarehouseMgr();
+                warehouseMgr.alterCnGroup(stmt);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitAdminSetAutomatedSnapshotOnStatement(AdminSetAutomatedSnapshotOnStmt stmt,
+                                                                     ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                context.getGlobalStateMgr().getClusterSnapshotMgr().setAutomatedSnapshotOn(stmt);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitAdminSetAutomatedSnapshotOffStatement(AdminSetAutomatedSnapshotOffStmt stmt,
+                                                                        ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> {
+                context.getGlobalStateMgr().getClusterSnapshotMgr().setAutomatedSnapshotOff(stmt);
+            });
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitCreateBaselinePlanStatement(CreateBaselinePlanStmt statement,
+                                                              ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> SPMStmtExecutor.execute(context, statement));
+            return null;
+        }
+
+        @Override
+        public ShowResultSet visitDropBaselinePlanStatement(DropBaselinePlanStmt statement, ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> SPMStmtExecutor.execute(context, statement));
+            return null;
+        }
+
+        public ShowResultSet visitControlBaselinePlanStatement(ControlBaselinePlanStmt statement,
+                                                               ConnectContext context) {
+            ErrorReport.wrapWithRuntimeException(() -> SPMStmtExecutor.execute(context, statement));
+            return null;
+        }
+    }
 }

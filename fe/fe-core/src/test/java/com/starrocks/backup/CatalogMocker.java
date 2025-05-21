@@ -56,7 +56,6 @@ import com.starrocks.catalog.PartitionInfo;
 import com.starrocks.catalog.PartitionKey;
 import com.starrocks.catalog.PartitionType;
 import com.starrocks.catalog.PhysicalPartition;
-import com.starrocks.catalog.PhysicalPartitionImpl;
 import com.starrocks.catalog.PrimitiveType;
 import com.starrocks.catalog.RandomDistributionInfo;
 import com.starrocks.catalog.RangePartitionInfo;
@@ -72,6 +71,7 @@ import com.starrocks.common.jmockit.Deencapsulation;
 import com.starrocks.common.util.Util;
 import com.starrocks.load.Load;
 import com.starrocks.persist.EditLog;
+import com.starrocks.qe.ConnectContext;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.sql.ast.PartitionValue;
 import com.starrocks.system.SystemInfoService;
@@ -105,6 +105,7 @@ public class CatalogMocker {
 
     public static final String TEST_SINGLE_PARTITION_NAME = TEST_TBL_NAME;
     public static final long TEST_SINGLE_PARTITION_ID = 40000;
+    public static final long TEST_SINGLE_PHYSICAL_PARTITION_ID = 40011;
     public static final long TEST_TABLET0_ID = 60000;
     public static final long TEST_REPLICA0_ID = 70000;
     public static final long TEST_REPLICA1_ID = 70001;
@@ -142,12 +143,17 @@ public class CatalogMocker {
 
     public static final String TEST_PARTITION1_NAME = "p1";
     public static final long TEST_PARTITION1_ID = 40001;
+    public static final long TEST_PH_PARTITION1_ID = 40011;
     public static final String TEST_PARTITION2_NAME = "p2";
     public static final long TEST_PARTITION2_ID = 40002;
+    public static final long TEST_PH_PARTITION2_ID = 40012;
     public static final String TEST_PARTITION1_NAME_PK = "p1_pk";
     public static final long TEST_PARTITION1_PK_ID = 40003;
+    public static final long TEST_PH_PARTITION1_PK_ID = 40013;
     public static final String TEST_PARTITION2_NAME_PK = "p2_pk";
     public static final long TEST_PARTITION2_PK_ID = 40004;
+    public static final long TEST_PH_PARTITION2_PK_ID = 40014;
+    public static final long TEST_PARTITION3_ID = 40015;
 
     public static final long TEST_BASE_TABLET_P1_ID = 60001;
     public static final long TEST_REPLICA3_ID = 70003;
@@ -261,7 +267,8 @@ public class CatalogMocker {
         MaterializedIndex baseIndex = new MaterializedIndex(TEST_TBL_ID, IndexState.NORMAL);
         DistributionInfo distributionInfo = new RandomDistributionInfo(32);
         Partition partition =
-                new Partition(TEST_SINGLE_PARTITION_ID, TEST_SINGLE_PARTITION_NAME, baseIndex, distributionInfo);
+                new Partition(TEST_SINGLE_PARTITION_ID, TEST_SINGLE_PHYSICAL_PARTITION_ID,
+                        TEST_SINGLE_PARTITION_NAME, baseIndex, distributionInfo);
         PartitionInfo partitionInfo = new SinglePartitionInfo();
         partitionInfo.setReplicationNum(TEST_SINGLE_PARTITION_ID, (short) 3);
         partitionInfo.setIsInMemory(TEST_SINGLE_PARTITION_ID, false);
@@ -307,12 +314,13 @@ public class CatalogMocker {
         // 3. range partition olap table
         MaterializedIndex baseIndexP1 = new MaterializedIndex(TEST_TBL2_ID, IndexState.NORMAL);
         MaterializedIndex baseIndexP2 = new MaterializedIndex(TEST_TBL2_ID, IndexState.NORMAL);
+        MaterializedIndex baseIndexP3 = new MaterializedIndex(TEST_TBL2_ID, IndexState.NORMAL);
         DistributionInfo distributionInfo2 =
                 new HashDistributionInfo(32, Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(1)));
         Partition partition1 =
-                new Partition(TEST_PARTITION1_ID, TEST_PARTITION1_NAME, baseIndexP1, distributionInfo2);
+                new Partition(TEST_PARTITION1_ID, TEST_PH_PARTITION1_ID, TEST_PARTITION1_NAME, baseIndexP1, distributionInfo2);
         Partition partition2 =
-                new Partition(TEST_PARTITION2_ID, TEST_PARTITION2_NAME, baseIndexP2, distributionInfo2);
+                new Partition(TEST_PARTITION2_ID, TEST_PH_PARTITION2_ID, TEST_PARTITION2_NAME, baseIndexP2, distributionInfo2);
         RangePartitionInfo rangePartitionInfo = new RangePartitionInfo(Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(0)));
         DataProperty dataPropertyP1 = new DataProperty(TStorageMedium.HDD);
         PartitionKey rangeP1Lower =
@@ -381,7 +389,7 @@ public class CatalogMocker {
         rollupTabletP1.addReplica(replica10);
         rollupTabletP1.addReplica(replica11);
 
-        partition1.createRollupIndex(rollupIndexP1);
+        partition1.getDefaultPhysicalPartition().createRollupIndex(rollupIndexP1);
 
         // rollup index p2
         MaterializedIndex rollupIndexP2 = new MaterializedIndex(TEST_ROLLUP_ID, IndexState.NORMAL);
@@ -397,7 +405,7 @@ public class CatalogMocker {
         rollupTabletP2.addReplica(replica13);
         rollupTabletP2.addReplica(replica14);
 
-        partition2.createRollupIndex(rollupIndexP2);
+        partition2.getDefaultPhysicalPartition().createRollupIndex(rollupIndexP2);
 
         olapTable2.setIndexMeta(TEST_ROLLUP_ID, TEST_ROLLUP_NAME, TEST_ROLLUP_SCHEMA, 0, ROLLUP_SCHEMA_HASH,
                 (short) 1, TStorageType.COLUMN, KeysType.AGG_KEYS);
@@ -409,9 +417,11 @@ public class CatalogMocker {
         DistributionInfo distributionInfo3 =
                 new HashDistributionInfo(32, Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(1)));
         Partition partition1Pk =
-                new Partition(TEST_PARTITION1_PK_ID, TEST_PARTITION1_NAME_PK, baseIndexP1Pk, distributionInfo3);
+                new Partition(TEST_PARTITION1_PK_ID, TEST_PH_PARTITION1_ID,
+                        TEST_PARTITION1_NAME_PK, baseIndexP1Pk, distributionInfo3);
         Partition partition2Pk =
-                new Partition(TEST_PARTITION2_PK_ID, TEST_PARTITION2_NAME_PK, baseIndexP2Pk, distributionInfo3);
+                new Partition(TEST_PARTITION2_PK_ID, TEST_PH_PARTITION2_ID,
+                        TEST_PARTITION2_NAME_PK, baseIndexP2Pk, distributionInfo3);
         RangePartitionInfo rangePartitionInfoPk = new RangePartitionInfo(Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(0)));
 
         PartitionKey rangeP1LowerPk =
@@ -476,13 +486,18 @@ public class CatalogMocker {
         {
             baseIndexP1 = new MaterializedIndex(TEST_TBL4_ID, IndexState.NORMAL);
             baseIndexP2 = new MaterializedIndex(TEST_TBL4_ID, IndexState.NORMAL);
+            baseIndexP3 = new MaterializedIndex(TEST_TBL4_ID, IndexState.NORMAL);
             DistributionInfo distributionInfo4 = new RandomDistributionInfo(1);
             partition1 =
-                    new Partition(TEST_PARTITION1_ID, TEST_PARTITION1_NAME, baseIndexP1, distributionInfo4);
+                    new Partition(TEST_PARTITION1_ID, TEST_PH_PARTITION1_ID,
+                            TEST_PARTITION1_NAME, baseIndexP1, distributionInfo4);
 
-            PhysicalPartition physicalPartition2 = new PhysicalPartitionImpl(
-                        TEST_PARTITION2_ID, "", TEST_PARTITION1_ID, 0, baseIndexP2);
+            PhysicalPartition physicalPartition2 = new PhysicalPartition(
+                        TEST_PARTITION2_ID, "pp2", TEST_PARTITION1_ID, baseIndexP2);
+            PhysicalPartition physicalPartition3 = new PhysicalPartition(
+                        TEST_PARTITION3_ID, "pp3", TEST_PARTITION1_ID, baseIndexP3);
             partition1.addSubPartition(physicalPartition2);
+            partition1.addSubPartition(physicalPartition3);
 
             rangePartitionInfo = new RangePartitionInfo(Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(0)));
             rangePartitionInfo.addPartition(TEST_PARTITION1_ID, false, rangeP1, dataPropertyP1, (short) 3, false);
@@ -527,7 +542,8 @@ public class CatalogMocker {
             baseIndexP1 = new MaterializedIndex(TEST_TBL5_ID, IndexState.NORMAL);
             baseIndexP2 = new MaterializedIndex(TEST_TBL5_ID, IndexState.NORMAL);
             DistributionInfo distributionInfo5 = new RandomDistributionInfo(1);
-            partition1 = new Partition(TEST_PARTITION1_ID, TEST_PARTITION1_NAME, baseIndexP1, distributionInfo5);
+            partition1 = new Partition(TEST_PARTITION1_ID, TEST_PH_PARTITION1_ID,
+                    TEST_PARTITION1_NAME, baseIndexP1, distributionInfo5);
 
             ListPartitionInfo listPartitionInfo = new ListPartitionInfo(PartitionType.LIST,
                     Lists.newArrayList(TEST_TBL_BASE_SCHEMA.get(0)));
@@ -601,7 +617,7 @@ public class CatalogMocker {
                 minTimes = 0;
                 result = new Database();
 
-                globalStateMgr.getLocalMetastore().listDbNames();
+                globalStateMgr.getLocalMetastore().listDbNames((ConnectContext) any);
                 minTimes = 0;
                 result = Lists.newArrayList(TEST_DB_NAME);
 

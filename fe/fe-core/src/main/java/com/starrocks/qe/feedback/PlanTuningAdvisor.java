@@ -18,12 +18,14 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.starrocks.qe.feedback.skeleton.ScanNode;
 import com.starrocks.qe.feedback.skeleton.SkeletonNode;
 import com.starrocks.server.GlobalStateMgr;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class PlanTuningAdvisor {
 
@@ -58,6 +60,9 @@ public class PlanTuningAdvisor {
     }
 
     public OperatorTuningGuides.OptimizedRecord getOptimizedRecord(UUID queryId) {
+        if (queryId == null) {
+            return null;
+        }
         return optimizedQueryRecords.get(queryId);
     }
 
@@ -65,9 +70,44 @@ public class PlanTuningAdvisor {
         if (tuningGuides.isEmpty()) {
             return;
         }
+
         PlanTuningCacheKey key = new PlanTuningCacheKey(sql, skeletonNode);
-        if (cache.getIfPresent(key) == null) {
+        List<PlanTuningCacheKey> matchingKeys = findMatchingKeys(key, true);
+
+        if (matchingKeys.isEmpty()) {
             cache.put(key, tuningGuides);
+        } else {
+            for (PlanTuningCacheKey matchingKey : matchingKeys) {
+                OperatorTuningGuides existingGuides = cache.getIfPresent(matchingKey);
+                if (existingGuides != null && existingGuides.equals(tuningGuides)) {
+                    mergeRangesForScanNodes(matchingKey, key);
+                }
+            }
+        }
+
+    }
+
+    private List<PlanTuningCacheKey> findMatchingKeys(PlanTuningCacheKey key, boolean useParameterizedMode) {
+        try (ParameterizedModeContext context = new ParameterizedModeContext(key, useParameterizedMode)) {
+            return cache.asMap().keySet().stream()
+                    .filter(key::equals)
+                    .collect(Collectors.toList());
+        }
+    }
+
+    private void mergeRangesForScanNodes(PlanTuningCacheKey targetKey, PlanTuningCacheKey sourceKey) {
+        List<SkeletonNode> targetNodes = targetKey.getSkeletonNodes();
+        List<SkeletonNode> sourceNodes = sourceKey.getSkeletonNodes();
+
+        for (int i = 0; i < targetNodes.size(); i++) {
+            if (targetNodes.get(i) instanceof ScanNode targetScanNode &&
+                    sourceNodes.get(i) instanceof ScanNode sourceScanNode) {
+                try {
+                    targetScanNode.mergeColumnRangePredicate(sourceScanNode);
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
         }
     }
 
@@ -75,8 +115,6 @@ public class PlanTuningAdvisor {
         cache.invalidateAll();
         optimizedQueryRecords.clear();
     }
-
-
 
     public void deleteTuningGuides(UUID queryId) {
         for (Map.Entry<PlanTuningCacheKey, OperatorTuningGuides> entry : cache.asMap().entrySet()) {
@@ -107,14 +145,50 @@ public class PlanTuningAdvisor {
             row.add(entry.getValue().getOriginalQueryId().toString());
             row.add(entry.getKey().getSql());
             row.add(String.valueOf(entry.getValue().getOriginalTimeCost()));
-            row.add(entry.getValue().getTuneGuidesInfo());
+            row.add(entry.getValue().getTuneGuidesInfo(false));
             row.add(String.valueOf(entry.getValue().getAvgTunedTimeCost()));
+            row.add(String.valueOf(entry.getValue().optimizedQueryCount()));
             row.add(String.valueOf(entry.getValue().isUseful()));
             row.add(nodeName);
             result.add(row);
         }
         return result;
 
+    }
+
+    private static class ParameterizedModeContext implements AutoCloseable {
+        private final PlanTuningCacheKey key;
+        private final boolean originalMode;
+
+        public ParameterizedModeContext(PlanTuningCacheKey key, boolean enableParameterized) {
+            this.key = key;
+
+            ScanNode scanNode = findFirstScanNode(key);
+            this.originalMode = scanNode != null && scanNode.isEnableParameterizedMode();
+
+            if (enableParameterized) {
+                key.enableParameterizedMode();
+            } else {
+                key.disableParameterizedMode();
+            }
+        }
+
+        @Override
+        public void close() {
+            if (originalMode) {
+                key.enableParameterizedMode();
+            } else {
+                key.disableParameterizedMode();
+            }
+        }
+
+        private ScanNode findFirstScanNode(PlanTuningCacheKey key) {
+            return key.getSkeletonNodes().stream()
+                    .filter(node -> node instanceof ScanNode)
+                    .map(node -> (ScanNode) node)
+                    .findFirst()
+                    .orElse(null);
+        }
     }
 
 }

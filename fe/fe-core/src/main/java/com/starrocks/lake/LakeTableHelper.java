@@ -20,6 +20,7 @@ import com.staros.proto.ShardInfo;
 import com.staros.proto.StatusCode;
 import com.starrocks.alter.AlterJobV2Builder;
 import com.starrocks.alter.LakeTableAlterJobV2Builder;
+import com.starrocks.alter.LakeTableRollupBuilder;
 import com.starrocks.catalog.Column;
 import com.starrocks.catalog.MaterializedIndex;
 import com.starrocks.catalog.MaterializedIndexMeta;
@@ -42,8 +43,12 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public class LakeTableHelper {
     private static final Logger LOG = LogManager.getLogger(LakeTableHelper.class);
@@ -77,6 +82,11 @@ public class LakeTableHelper {
     static AlterJobV2Builder alterTable(OlapTable table) {
         Preconditions.checkState(table.isCloudNativeTableOrMaterializedView());
         return new LakeTableAlterJobV2Builder(table);
+    }
+
+    static AlterJobV2Builder rollUp(OlapTable table) {
+        Preconditions.checkState(table.isCloudNativeTableOrMaterializedView());
+        return new LakeTableRollupBuilder(table);
     }
 
     static boolean removeShardRootDirectory(ShardInfo shardInfo) {
@@ -154,12 +164,33 @@ public class LakeTableHelper {
         return ret;
     }
 
-    public static boolean isSharedPartitionDirectory(PhysicalPartition partition, long warehouseId) throws StarClientException {
-        ShardInfo shardInfo = getAssociatedShardInfo(partition, warehouseId).orElse(null);
+    /**
+     * delete `partition`'s all shard group meta (shards meta included) from starmanager
+     */
+    static void deleteShardGroupMeta(Partition partition)  {
+        // use Set to avoid duplicate shard group id
+        StarOSAgent starOSAgent = GlobalStateMgr.getCurrentState().getStarOSAgent();
+        Collection<PhysicalPartition> subPartitions = partition.getSubPartitions();
+        Set<Long> needRemoveShardGroupIdSet = new HashSet<>();
+        for (PhysicalPartition subPartition : subPartitions) {
+            for (MaterializedIndex index : subPartition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+                needRemoveShardGroupIdSet.add(index.getShardGroupId());
+            }
+        }
+        if (!needRemoveShardGroupIdSet.isEmpty()) {
+            starOSAgent.deleteShardGroup(new ArrayList<>(needRemoveShardGroupIdSet));
+            LOG.debug("Deleted shard group related to partition {}, group ids: {}", partition.getId(),
+                    needRemoveShardGroupIdSet);
+        }
+    }
+
+    public static boolean isSharedPartitionDirectory(PhysicalPartition physicalPartition, long warehouseId)
+            throws StarClientException {
+        ShardInfo shardInfo = getAssociatedShardInfo(physicalPartition, warehouseId).orElse(null);
         if (shardInfo == null) {
             return false;
         }
-        return isSharedDirectory(shardInfo.getFilePath().getFullPath(), partition.getId());
+        return isSharedDirectory(shardInfo.getFilePath().getFullPath(), physicalPartition.getId());
     }
 
     /**
@@ -171,8 +202,8 @@ public class LakeTableHelper {
      *
      * @return true if the directory is a shared directory, false otherwise
      */
-    public static boolean isSharedDirectory(String path, long partitionId) {
-        return !path.endsWith(String.format("/%d", partitionId));
+    public static boolean isSharedDirectory(String path, long physicalPartitionId) {
+        return !path.endsWith(String.format("/%d", physicalPartitionId));
     }
 
     /**
@@ -209,5 +240,25 @@ public class LakeTableHelper {
                 sourceType == TransactionState.LoadJobSourceType.ROUTINE_LOAD_TASK ||
                 sourceType == TransactionState.LoadJobSourceType.INSERT_STREAMING ||
                 sourceType == TransactionState.LoadJobSourceType.BATCH_LOAD_JOB;
+    }
+
+    // if one of the tables in tableIdList is LakeTable with partition aggregation, return true
+    // else return false
+    public static boolean enablePartitionAggregation(long dbId, List<Long> tableIdList) {
+        if (!RunMode.isSharedDataMode()) {
+            return false;
+        }
+        // for each tableIdList
+        for (Long tableId : tableIdList) {
+            OlapTable table = (OlapTable) GlobalStateMgr.getCurrentState().getLocalMetastore().getTable(dbId, tableId);
+            if (table == null) {
+                continue;
+            }
+            // check if table is LakeTable with partition aggregation
+            if (table.enablePartitionAggregation()) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -17,11 +17,11 @@ package com.starrocks.sql.analyzer;
 import com.google.common.base.Joiner;
 import com.starrocks.alter.AlterJobMgr;
 import com.starrocks.analysis.SlotRef;
-import com.starrocks.catalog.BaseTableInfo;
 import com.starrocks.catalog.Column;
 import com.starrocks.catalog.Database;
 import com.starrocks.catalog.MaterializedView;
 import com.starrocks.catalog.PaimonTable;
+import com.starrocks.catalog.PartitionInfo;
 import com.starrocks.catalog.PrimitiveType;
 import com.starrocks.catalog.ScalarType;
 import com.starrocks.catalog.Table;
@@ -45,7 +45,6 @@ import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -169,41 +168,8 @@ public class MaterializedViewAnalyzerTest {
         }
     }
 
-    @RepeatedTest(value = 1)
-    public void testReplacePaimonTableAlias(@Mocked SlotRef slotRef, @Mocked PaimonTable table) {
-        MaterializedViewAnalyzer.MaterializedViewAnalyzerVisitor materializedViewAnalyzerVisitor =
-                new MaterializedViewAnalyzer.MaterializedViewAnalyzerVisitor();
-        BaseTableInfo baseTableInfo = new BaseTableInfo("test_catalog", "test_db", "test_tbl",
-                "test_tbl:7920f06f-df49-472f-9662-97ac5c32da96(test_tbl) REFERENCES");
-        {
-            new Expectations() {
-                {
-                    table.getCatalogName();
-                    result = "test_catalog";
-                    table.getDbName();
-                    result = "test_db";
-                    table.getTableIdentifier();
-                    result = "test_tbl:7920f06f-df49-472f-9662-97ac5c32da96(test_tbl) REFERENCES";
-                }
-            };
-
-            Assert.assertTrue(materializedViewAnalyzerVisitor.replacePaimonTableAlias(slotRef, table, baseTableInfo));
-        }
-
-        {
-            new Expectations() {
-                {
-                    table.getCatalogName();
-                    result = "test_catalog2";
-
-                }
-            };
-            Assert.assertFalse(materializedViewAnalyzerVisitor.replacePaimonTableAlias(slotRef, table, baseTableInfo));
-        }
-    }
-
     @Test
-    public void testCreateIcebergTable() throws Exception {
+    public void testCreateIcebergTable1() throws Exception {
         {
             String mvName = "iceberg_parttbl_mv1";
             starRocksAssert.useDatabase("test")
@@ -237,8 +203,42 @@ public class MaterializedViewAnalyzerTest {
             Assert.fail();
         } catch (Exception e) {
             Assert.assertTrue(e.getMessage().
-                    contains("Do not support create materialized view when base iceberg table partition transform " +
-                            "has bucket or truncate."));
+                    contains("Do not support create materialized view when base iceberg table partition transform "));
+        }
+    }
+
+    @Test
+    public void testCreateIcebergTable2() throws Exception {
+        String mvName = "iceberg_parttbl_mv1";
+        starRocksAssert.useDatabase("test")
+                .withMaterializedView("CREATE MATERIALIZED VIEW `test`.`iceberg_parttbl_mv1`\n" +
+                        "PARTITION BY date \n" +
+                        "DISTRIBUTED BY HASH(`id`) BUCKETS 10\n" +
+                        "REFRESH DEFERRED MANUAL\n" +
+                        "AS SELECT id, data, date  FROM `iceberg0`.`partitioned_db`.`t1` as a;");
+        Table mv = starRocksAssert.getTable("test", mvName);
+        Assert.assertTrue(mv != null);
+        Assert.assertTrue(mv instanceof MaterializedView);
+        PartitionInfo partitionInfo = ((MaterializedView) mv).getPartitionInfo();
+        Assert.assertTrue(partitionInfo.isListPartition());
+        starRocksAssert.dropMaterializedView(mvName);
+    }
+
+    @Test
+    public void testCreateIcebergTable3() {
+        try {
+            starRocksAssert.useDatabase("test")
+                    .withMaterializedView("CREATE MATERIALIZED VIEW `test`.`iceberg_bucket_mv1`\n" +
+                            "PARTITION BY (id, data, date_trunc('year', ts))\n" +
+                            "REFRESH DEFERRED MANUAL\n" +
+                            "AS SELECT id, data, ts  FROM `iceberg0`.`partitioned_transforms_db`.`t0_multi_year` as a;");
+            Table mv = starRocksAssert.getTable("test", "iceberg_bucket_mv1");
+            Assert.assertTrue(mv != null);
+            Assert.assertTrue(mv instanceof MaterializedView);
+            PartitionInfo partitionInfo = ((MaterializedView) mv).getPartitionInfo();
+            Assert.assertTrue(partitionInfo.isListPartition());
+        } catch (Exception e) {
+            Assert.fail();
         }
     }
 

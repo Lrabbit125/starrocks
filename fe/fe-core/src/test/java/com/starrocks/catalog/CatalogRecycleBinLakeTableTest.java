@@ -52,6 +52,7 @@ public class CatalogRecycleBinLakeTableTest {
     @BeforeClass
     public static void beforeClass() {
         UtFrameUtils.createMinStarRocksCluster(RunMode.SHARED_DATA);
+        GlobalStateMgr.getCurrentState().getWarehouseMgr().initDefaultWarehouse();
     }
 
     private static Table createTable(ConnectContext connectContext, String sql) throws Exception {
@@ -97,7 +98,8 @@ public class CatalogRecycleBinLakeTableTest {
 
     private static void checkPartitionTablet(Partition partition, boolean expectExist) {
         TabletInvertedIndex tabletIndex = GlobalStateMgr.getCurrentState().getTabletInvertedIndex();
-        for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+        for (MaterializedIndex index :
+                partition.getDefaultPhysicalPartition().getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
             for (Tablet tablet : index.getTablets()) {
                 TabletMeta meta = tabletIndex.getTabletMeta(tablet.getId());
                 if (expectExist) {
@@ -320,7 +322,7 @@ public class CatalogRecycleBinLakeTableTest {
                 ") distributed by hash(key1) buckets 3 " +
                 "properties('replication_num' = '1');", dbName));
 
-        GlobalStateMgr.getCurrentState().getLocalMetastore().dropDb(dbName, false);
+        GlobalStateMgr.getCurrentState().getLocalMetastore().dropDb(new ConnectContext(), dbName, false);
         Assert.assertNotNull(recycleBin.getTable(db.getId(), table1.getId()));
         Assert.assertNotNull(recycleBin.getTable(db.getId(), table2.getId()));
 
@@ -331,7 +333,7 @@ public class CatalogRecycleBinLakeTableTest {
         Assert.assertNull(recycleBin.getTable(db.getId(), table2.getId()));
 
         // Drop the database again.
-        GlobalStateMgr.getCurrentState().getLocalMetastore().dropDb(dbName, false);
+        GlobalStateMgr.getCurrentState().getLocalMetastore().dropDb(new ConnectContext(), dbName, false);
         Assert.assertNotNull(recycleBin.getTable(db.getId(), table1.getId()));
         Assert.assertNotNull(recycleBin.getTable(db.getId(), table2.getId()));
 
@@ -391,9 +393,12 @@ public class CatalogRecycleBinLakeTableTest {
         Partition p2 = table1.getPartition("p2");
         Partition p3 = table1.getPartition("p3");
         Assert.assertNotNull(p1);
-        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p1, WarehouseManager.DEFAULT_WAREHOUSE_ID));
-        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p2, WarehouseManager.DEFAULT_WAREHOUSE_ID));
-        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p3, WarehouseManager.DEFAULT_WAREHOUSE_ID));
+        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p1.getDefaultPhysicalPartition(),
+                WarehouseManager.DEFAULT_WAREHOUSE_ID));
+        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p2.getDefaultPhysicalPartition(),
+                WarehouseManager.DEFAULT_WAREHOUSE_ID));
+        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p3.getDefaultPhysicalPartition(),
+                WarehouseManager.DEFAULT_WAREHOUSE_ID));
 
         // Drop partition "p1"
         alterTable(connectContext, String.format("ALTER TABLE %s.t1 DROP PARTITION p1", dbName));
@@ -499,7 +504,8 @@ public class CatalogRecycleBinLakeTableTest {
                         "PROPERTIES('replication_num' = '1');", dbName));
 
         p1 = table2.getPartition("p1");
-        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p1, WarehouseManager.DEFAULT_WAREHOUSE_ID));
+        Assert.assertFalse(LakeTableHelper.isSharedPartitionDirectory(p1.getDefaultPhysicalPartition(),
+                WarehouseManager.DEFAULT_WAREHOUSE_ID));
         // Drop partition "p1"
         alterTable(connectContext, String.format("ALTER TABLE %s.t2 DROP PARTITION p1", dbName));
         Assert.assertNull(table2.getPartition("p1"));
@@ -566,7 +572,7 @@ public class CatalogRecycleBinLakeTableTest {
             @Mock
             public boolean isSharedDirectory(String path, long partitionId) {
                 Assert.assertTrue(path.endsWith("/" + partitionId));
-                return partitionId == p1.getId();
+                return partitionId == p1.getDefaultPhysicalPartition().getId();
             }
         };
         new MockUp<BrpcProxy>() {

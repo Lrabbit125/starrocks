@@ -74,6 +74,17 @@ Status ConnectorScanNode::init(const TPlanNode& tnode, RuntimeState* state) {
     }
     _estimate_scan_row_bytes();
 
+    if (tnode.__isset.lake_scan_node) {
+        if (tnode.lake_scan_node.__isset.enable_topn_filter_back_pressure &&
+            tnode.lake_scan_node.enable_topn_filter_back_pressure) {
+            _enable_topn_filter_back_pressure = true;
+            _back_pressure_max_rounds = tnode.lake_scan_node.back_pressure_max_rounds;
+            _back_pressure_num_rows = tnode.lake_scan_node.back_pressure_num_rows;
+            _back_pressure_throttle_time = tnode.lake_scan_node.back_pressure_throttle_time;
+            _back_pressure_throttle_time_upper_bound = tnode.lake_scan_node.back_pressure_throttle_time_upper_bound;
+        }
+    }
+
     return Status::OK();
 }
 
@@ -279,9 +290,6 @@ Status ConnectorScanNode::_start_scan_thread(RuntimeState* state) {
 }
 
 Status ConnectorScanNode::_create_and_init_scanner(RuntimeState* state, TScanRange& scan_range) {
-    if (scan_range.__isset.broker_scan_range) {
-        scan_range.broker_scan_range.params.__set_non_blocking_read(false);
-    }
     connector::DataSourcePtr data_source = _data_source_provider->create_data_source(scan_range);
     data_source->set_predicates(_conjunct_ctxs);
     data_source->set_runtime_filters(&_runtime_filter_collector);

@@ -225,7 +225,7 @@ public class Function implements Writable {
         id = other.id;
         name = other.name;
         retType = other.retType;
-        argTypes = other.argTypes;
+        argTypes = Arrays.copyOf(other.argTypes, other.argTypes.length);
         argNames = other.argNames;
         hasVarArgs = other.hasVarArgs;
         userVisible = other.userVisible;
@@ -441,6 +441,10 @@ public class Function implements Writable {
 
     public void setAggStateDesc(AggStateDesc aggStateDesc) {
         this.aggStateDesc = aggStateDesc;
+    }
+
+    public void setFunctionName(FunctionName name) {
+        this.name = name;
     }
 
     // Compares this to 'other' for mode.
@@ -718,6 +722,8 @@ public class Function implements Writable {
                 optSuffix = Optional.of(FunctionSet.AGG_STATE_MERGE_SUFFIX);
             } else if (s.endsWith(FunctionSet.AGG_STATE_UNION_SUFFIX)) {
                 optSuffix = Optional.of(FunctionSet.AGG_STATE_UNION_SUFFIX);
+            } else if (s.endsWith(FunctionSet.AGG_STATE_IF_SUFFIX)) {
+                optSuffix = Optional.of(FunctionSet.AGG_STATE_IF_SUFFIX);
             }
             if (optSuffix.isEmpty()) {
                 return s;

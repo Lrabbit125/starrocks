@@ -224,8 +224,8 @@ public:
     void make_commit(int64_t version, uint32_t rowset_seg_id, uint32_t max_compact_input_rowset_id);
 
     // helper class to access RowsetMeta
-    int64_t start_version() const { return rowset_meta()->version().first; }
-    int64_t end_version() const { return rowset_meta()->version().second; }
+    int64_t start_version() const override { return rowset_meta()->version().first; }
+    int64_t end_version() const override { return rowset_meta()->version().second; }
     size_t data_disk_size() const { return rowset_meta()->total_disk_size(); }
     bool empty() const { return rowset_meta()->empty(); }
     int64_t num_rows() const override { return rowset_meta()->num_rows(); }
@@ -242,7 +242,9 @@ public:
     int64_t num_segments() const { return rowset_meta()->num_segments(); }
     uint32_t num_delete_files() const { return rowset_meta()->get_num_delete_files(); }
     uint32_t num_update_files() const { return rowset_meta()->get_num_update_files(); }
-    bool has_data_files() const { return num_segments() > 0 || num_delete_files() > 0 || num_update_files() > 0; }
+    bool has_data_files() const override {
+        return num_segments() > 0 || num_delete_files() > 0 || num_update_files() > 0;
+    }
     KeysType keys_type() const { return _keys_type; }
     bool is_overlapped() const override { return rowset_meta()->is_segments_overlapping(); }
 
@@ -370,6 +372,16 @@ public:
         std::for_each(rowsets.begin(), rowsets.end(), [](const RowsetSharedPtr& rowset) { rowset->close(); });
     }
 
+    bool is_partial_update() const {
+        if (!rowset_meta()->get_meta_pb_without_schema().has_txn_meta()) {
+            return false;
+        }
+        // Merge condition and auto-increment-column-only partial update will also set txn_meta
+        // but will not set partial_update_column_ids
+        const auto& txn_meta = rowset_meta()->get_meta_pb_without_schema().txn_meta();
+        return !txn_meta.partial_update_column_ids().empty();
+    }
+
     bool is_column_mode_partial_update() const { return _rowset_meta->is_column_mode_partial_update(); }
 
     // only used in unit test
@@ -378,6 +390,9 @@ public:
     Status verify();
 
     size_t segment_memory_usage();
+
+    // check if the rowset files exist
+    bool check_file_existence();
 
 protected:
     friend class RowsetFactory;
@@ -416,6 +431,11 @@ private:
     Status _link_delta_column_group_files(KVStore* kvstore, const std::string& dir, int64_t version);
 
     Status _copy_delta_column_group_files(KVStore* kvstore, const std::string& dir, int64_t version);
+
+    StatusOr<std::shared_ptr<Segment>> _load_segment(int32_t idx, const TabletSchemaCSPtr& schema,
+                                                     std::shared_ptr<FileSystem>& fs,
+                                                     const FooterPointerPB* partial_rowset_footer,
+                                                     size_t* foot_size_hint);
 
     std::vector<SegmentSharedPtr> _segments;
 

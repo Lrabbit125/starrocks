@@ -65,6 +65,8 @@ public:
 
     ordinal_t num_rows() const override { return _reader->num_rows(); }
 
+    bool has_zone_map() const override { return _reader->has_zone_map(); }
+
     Status get_row_ranges_by_zone_map(const std::vector<const ColumnPredicate*>& predicate,
                                       const ColumnPredicate* del_predicate, SparseRange<>* range,
                                       CompoundNodeType pred_relationn) override;
@@ -94,6 +96,8 @@ public:
 
     ColumnReader* get_column_reader() override { return _reader; }
 
+    Status null_count(size_t* count) override;
+
     bool is_nullable();
 
     int64_t element_ordinal() const override { return _element_ordinal; }
@@ -101,6 +105,9 @@ public:
     // only work when all_page_dict_encoded was true.
     // used to acquire load local dict
     int dict_size() override;
+
+    StatusOr<std::vector<std::pair<int64_t, int64_t>>> get_io_range_vec(const SparseRange<>& range,
+                                                                        Column* dst) override;
 
 private:
     static Status _seek_to_pos_in_page(ParsedPage* page, ordinal_t offset_in_page);

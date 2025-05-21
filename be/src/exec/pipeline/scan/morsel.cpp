@@ -17,10 +17,12 @@
 #include <fmt/compile.h>
 
 #include <memory>
+#include <mutex>
 
 #include "common/statusor.h"
 #include "exec/olap_utils.h"
 #include "storage/chunk_helper.h"
+#include "storage/lake/tablet_reader.h"
 #include "storage/range.h"
 #include "storage/rowset/rowid_range_option.h"
 #include "storage/rowset/rowset.h"
@@ -240,6 +242,7 @@ bool BucketSequenceMorselQueue::empty() const {
 }
 
 StatusOr<MorselPtr> BucketSequenceMorselQueue::try_get() {
+    std::lock_guard guard(_mutex);
     if (_unget_morsel != nullptr) {
         return std::move(_unget_morsel);
     }
@@ -261,6 +264,7 @@ std::string BucketSequenceMorselQueue::name() const {
 }
 
 StatusOr<bool> BucketSequenceMorselQueue::ready_for_next() const {
+    std::lock_guard guard(_mutex);
     if (_current_sequence < 0) {
         return true;
     }
@@ -504,9 +508,15 @@ Status PhysicalSplitMorselQueue::_init_segment() {
         if (0 == _rowset_idx) {
             _tablet_seek_ranges.clear();
             _mempool.clear();
-            RETURN_IF_ERROR(TabletReader::parse_seek_range(_tablets[_tablet_idx]->tablet_schema(), _range_start_op,
-                                                           _range_end_op, _range_start_key, _range_end_key,
-                                                           &_tablet_seek_ranges, &_mempool));
+            if (!_tablets[_tablet_idx]->belonged_to_cloud_native()) {
+                RETURN_IF_ERROR(TabletReader::parse_seek_range(_tablet_schema, _range_start_op, _range_end_op,
+                                                               _range_start_key, _range_end_key, &_tablet_seek_ranges,
+                                                               &_mempool));
+            } else {
+                RETURN_IF_ERROR(lake::TabletReader::parse_seek_range(*_tablet_schema, _range_start_op, _range_end_op,
+                                                                     _range_start_key, _range_end_key,
+                                                                     &_tablet_seek_ranges, &_mempool));
+            }
         }
         // Read a new rowset.
         RETURN_IF_ERROR(_cur_rowset()->load());
@@ -837,9 +847,15 @@ Status LogicalSplitMorselQueue::_init_tablet() {
 
     if (_tablet_idx == 0) {
         // All the tablets have the same schema, so parse seek range with the first table schema.
-        RETURN_IF_ERROR(TabletReader::parse_seek_range(_tablets[_tablet_idx]->tablet_schema(), _range_start_op,
-                                                       _range_end_op, _range_start_key, _range_end_key,
-                                                       &_tablet_seek_ranges, &_mempool));
+        if (!_tablets[_tablet_idx]->belonged_to_cloud_native()) {
+            RETURN_IF_ERROR(TabletReader::parse_seek_range(_tablet_schema, _range_start_op, _range_end_op,
+                                                           _range_start_key, _range_end_key, &_tablet_seek_ranges,
+                                                           &_mempool));
+        } else {
+            RETURN_IF_ERROR(lake::TabletReader::parse_seek_range(*_tablet_schema, _range_start_op, _range_end_op,
+                                                                 _range_start_key, _range_end_key, &_tablet_seek_ranges,
+                                                                 &_mempool));
+        }
     }
 
     _largest_rowset = _find_largest_rowset(_tablet_rowsets[_tablet_idx]);
@@ -850,8 +866,7 @@ Status LogicalSplitMorselQueue::_init_tablet() {
     RETURN_IF_ERROR(_largest_rowset->load());
     ASSIGN_OR_RETURN(_segment_group, _create_segment_group(_largest_rowset));
 
-    _short_key_schema =
-            std::make_shared<Schema>(ChunkHelper::get_short_key_schema(_tablets[_tablet_idx]->tablet_schema()));
+    _short_key_schema = std::make_shared<Schema>(ChunkHelper::get_short_key_schema(_tablet_schema));
     const auto tablet_num_rows = std::max<int64_t>({1, static_cast<int64_t>(_tablets[_tablet_idx]->num_rows()),
                                                     _largest_rowset->num_rows(), _segment_group->num_rows()});
     _sample_splitted_scan_blocks = _splitted_scan_rows * _segment_group->num_blocks() / tablet_num_rows;

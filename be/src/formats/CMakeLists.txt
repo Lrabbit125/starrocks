@@ -41,6 +41,15 @@ add_library(Formats STATIC
         avro/nullable_column.cpp
         avro/numeric_column.cpp
         avro/binary_column.cpp
+        avro/cpp/avro_reader.cpp
+        avro/cpp/avro_schema_builder.cpp
+        avro/cpp/binary_column_reader.cpp
+        avro/cpp/column_reader.cpp
+        avro/cpp/complex_column_reader.cpp
+        avro/cpp/date_column_reader.cpp
+        avro/cpp/nullable_column_reader.cpp
+        avro/cpp/numeric_column_reader.cpp
+        avro/cpp/utils.cpp
         orc/orc_chunk_reader.cpp
         orc/orc_file_writer.cpp
         orc/orc_input_stream.cpp
@@ -56,6 +65,7 @@ add_library(Formats STATIC
         parquet/column_chunk_reader.cpp
         parquet/column_converter.cpp
         parquet/column_reader.cpp
+        parquet/column_reader_factory.cpp
         parquet/scalar_column_reader.cpp
         parquet/complex_column_reader.cpp
         parquet/encoding.cpp
@@ -65,7 +75,6 @@ add_library(Formats STATIC
         parquet/schema.cpp
         parquet/stored_column_reader.cpp
         parquet/stored_column_reader_with_index.cpp
-        parquet/page_index_reader.cpp
         parquet/utils.cpp
         parquet/metadata.cpp
         parquet/meta_helper.cpp
@@ -77,6 +86,7 @@ add_library(Formats STATIC
         parquet/column_chunk_writer.cpp
         parquet/column_read_order_ctx.cpp
         parquet/statistics_helper.cpp
+        parquet/parquet_block_split_bloom_filter.cpp
         disk_range.hpp
         )
 

@@ -15,7 +15,7 @@
 package com.starrocks.load.pipe.filelist;
 
 import com.starrocks.catalog.CatalogUtils;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.load.pipe.PipeFileRecord;
 import com.starrocks.statistic.StatsConstants;
 import org.apache.commons.collections.CollectionUtils;
@@ -89,7 +89,7 @@ public class FileListTableRepo extends FileListRepo {
             "UPDATE " + FILE_LIST_FULL_NAME + " SET `state` = %s, `finish_load` = now() WHERE ";
 
     protected static final String INSERT_FILES =
-            "INSERT INTO " + FILE_LIST_FULL_NAME + "(" + ALL_COLUMNS + ")" + " VALUES ";
+            "INSERT INTO " + FILE_LIST_FULL_NAME + "(" + "`id`, " + ALL_COLUMNS + ")" + " VALUES ";
 
     protected static final String SELECTED_STAGED_FILES =
             "SELECT " + ALL_COLUMNS + " FROM " + FILE_LIST_FULL_NAME + " WHERE ";
@@ -154,7 +154,7 @@ public class FileListTableRepo extends FileListRepo {
      */
     static class SQLBuilder {
 
-        public static String buildCreateTableSql(int replicationNum) throws UserException {
+        public static String buildCreateTableSql(int replicationNum) throws StarRocksException {
             return String.format(FILE_LIST_TABLE_CREATE,
                     CatalogUtils.normalizeTableName(FILE_LIST_DB_NAME, FILE_LIST_TABLE_NAME), replicationNum);
         }

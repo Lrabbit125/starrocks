@@ -303,6 +303,44 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 * 默认值：true
 * 引入版本：v2.5.13，v3.0.7，v3.1.4，v3.2.0，v3.3.0
 
+### enable_parquet_reader_bloom_filter
+
+* 描述：是否启用 Parquet 文件的 Bloom Filter 以提高性能。`true` 表示启用 Bloom Filter，`false` 表示禁用。还可以使用 BE 参数 `parquet_reader_bloom_filter_enable` 在 Session 级别上控制这一行为。Parquet 中的 Bloom Filter 是在**每个行组的列级维护的**。如果 Parquet 文件包含某些列的 Bloom Filter，查询就可以使用这些列上的谓词来有效地跳过行组。
+* 默认值：true
+* 引入版本：v3.5
+
+### enable_plan_advisor
+
+* 描述：是否为慢查询或手动标记查询开启 Query Feedback 功能。
+* 默认值：true
+* 引入版本：v3.4.0
+
+### enable_plan_analyzer
+
+* 描述：是否为所有查询开启 Query Feedback 功能。该变量仅在 `enable_plan_advisor` 为 `true` 是生效。
+* 默认值：false
+* 引入版本：v3.4.0
+
+### enable_parquet_reader_bloom_filter
+
+* 默认值：true
+* 类型：Boolean
+* 单位：-
+* 描述：是否在读取 Parquet 文件时启用 Bloom Filter 优化。
+  * `true`（默认）：读取 Parquet 文件时启用 Bloom Filter 优化。
+  * `false`：读取 Parquet 文件时禁用 Bloom Filter 优化。
+* 引入版本：v3.5.0
+
+### enable_parquet_reader_page_index
+
+* 默认值：true
+* 类型：Boolean
+* 单位：-
+* 描述：是否在读取 Parquet 文件时启用 Page Index 优化。
+  * `true`（默认）：读取 Parquet 文件时启用 Page Index 优化。
+  * `false`：读取 Parquet 文件时禁用 Page Index 优化。
+* 引入版本：v3.5.0
+
 ### follower_query_forward_mode
 
 * 描述：用于指定将查询语句路由到 Leader FE 或 Follower FE 节点。
@@ -374,6 +412,15 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 * 描述：用于兼容 MySQL 客户端，无实际作用。
 * 默认值：4
 * 类型：Int
+
+### dynamic_overwrite
+
+* 描述：是否为 INSERT OVERWRITE 语句覆盖写分区表时启用 [Dynamic Overwrite](./sql-statements/loading_unloading/INSERT.md#dynamic-overwrite) 语义。有效值：
+  * `true`：启用 Dynamic Overwrite。
+  * `false`：禁用 Dynamic Overwrite 并使用默认语义。
+* 默认值：false
+* 引入版本：v3.4.0
+
 <!--
 ### enable_collect_table_level_scan_stats (Invisible to users)
 
@@ -423,7 +470,7 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 
 ### plan_mode
 
-* 描述：Iceberg Catalog 元数据获取方案模式。详细信息，参考 [Iceberg Catalog 元数据获取方案](../data_source/catalog/iceberg_catalog.md#附录元数据周期性后台刷新方案)。有效值：
+* 描述：Iceberg Catalog 元数据获取方案模式。详细信息，参考 [Iceberg Catalog 元数据获取方案](../data_source/catalog/iceberg/iceberg_catalog.md#附录元数据周期性后台刷新方案)。有效值：
   * `auto`：系统自动选择方案。
   * `local`：使用本地缓存方案。
   * `distributed`：使用分布式方案。
@@ -439,9 +486,20 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 
 ### enable_insert_strict
 
-* 描述：用于设置通过 INSERT 语句进行数据导入时，是否开启严格模式 (Strict Mode)。
-默认值为 `true`，即开启严格模式。关于该模式的介绍，可以参阅[严格模式](../loading/load_concept/strict_mode.md)。
+* 描述：是否在使用 INSERT from FILES() 导入数据时启用严格模式。有效值：`true` 和 `false`（默认值）。启用严格模式时，系统仅导入合格的数据行，过滤掉不合格的行，并返回不合格行的详细信息。更多信息请参见 [严格模式](../loading/load_concept/strict_mode.md)。在早于 v3.4.0 的版本中，当 `enable_insert_strict` 设置为 `true` 时，INSERT 作业会在出现不合格行时失败。
 * 默认值：true
+
+### insert_max_filter_ratio
+
+* 描述：INSERT 导入作业的最大容忍率，即导入作业能够容忍的因数据质量不合格而过滤掉的数据行所占的最大比例。当不合格行数比例超过该限制时，导入作业失败。默认值：`0`。范围：[0, 1]。
+* 默认值：0
+* 引入版本：v3.4.0
+
+### insert_timeout
+
+* 描述：INSERT 作业的超时时间。单位：秒。从 v3.4.0 版本开始，`insert_timeout` 作用于所有涉及 INSERT 的操作（例如，UPDATE、DELETE、CTAS、物化视图刷新、统计信息收集和 PIPE），替代原本的 `query_timeout`。
+* 默认值：14400
+* 引入版本：v3.4.0
 
 ### enable_materialized_view_for_insert
 
@@ -611,6 +669,14 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 * 默认值：false
 * 引入版本：v3.2
 
+### enable_query_trigger_analyze
+
+* 默认值：true
+* 类型：Boolean
+* 单位：-
+* 描述：是否开启查询触发 ANALYZE 任务。
+* 引入版本：v3.4.0
+
 ### event_scheduler
 
 * 描述：用于兼容 MySQL 客户端。无实际作用。
@@ -722,6 +788,36 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 ### lower_case_table_names (global)
 
 用于兼容 MySQL 客户端，无实际作用。StarRocks 中的表名是大小写敏感的。
+
+### lower_upper_support_utf8
+
+* 默认值：false
+* 类型：Boolean
+* 单位：-
+* 描述：是否在 `lower` 和 `upper` 函数中支持 UTF-8 字符的大小写转换。有效值：
+  * `true`：支持 UTF-8 字符的大小写转换。
+  * `false`（默认）：不支持 UTF-8 字符的大小写转换。
+* 引入版本：v3.5.0
+
+### low_cardinality_optimize_on_lake
+
+* 默认值：true
+* 类型：Boolean
+* 单位：-
+* 描述：是否在数据湖查询中启用低基数优化。有效值：
+  * `true`（默认）：在数据湖查询中启用低基数优化。
+  * `false`: 在数据湖查询中禁用低基数优化。
+* 引入版本：v3.5.0
+
+<!--
+### always_collect_low_card_dict_on_lake
+
+* 默认值：false
+* 类型：Boolean
+* 单位：-
+* 描述：是否基于统计信息收集低基数信息。
+* 引入版本：v3.5.0
+-->
 
 ### materialized_view_rewrite_mode（3.2 及以后）
 
@@ -869,31 +965,31 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 
 ### query_mem_limit
 
-* 描述：用于设置每个 BE 节点上单个查询的内存限制。该项仅在启用 Pipeline Engine 后生效。
+* 描述：用于设置每个 BE 节点上单个查询的内存限制。该项仅在启用 Pipeline Engine 后生效。设置为 `0` 表示没有限制。
 * 单位：字节
-* 默认值：`0`，表示没有限制。
+* 默认值：`0`
 
 ### query_queue_concurrency_limit (global)
 
-* 描述：单个 BE 节点中并发查询上限。仅在设置为大于 `0` 后生效。
+* 描述：单个 BE 节点中并发查询上限。仅在设置为大于 `0` 后生效。设置为 `0` 表示没有限制。
 * 默认值：`0`
 * 单位：-
 * 类型：Int
 
 ### query_queue_cpu_used_permille_limit (global)
 
-* 描述：单个 BE 节点中内存使用千分比上限（即 CPU 使用率）。仅在设置为大于 `0` 后生效。
+* 描述：单个 BE 节点中内存使用千分比上限（即 CPU 使用率）。仅在设置为大于 `0` 后生效。设置为 `0` 表示没有限制。
 * 默认值：0。
 * 取值范围：[0, 1000]
 
 ### query_queue_max_queued_queries (global)
 
-* 描述：队列中查询数量的上限。当达到此阈值时，新增查询将被拒绝执行。仅在设置为大于 `0` 后生效。
+* 描述：队列中查询数量的上限。当达到此阈值时，新增查询将被拒绝执行。仅在设置为大于 `0` 后生效。设置为 `0` 表示没有限制。
 * 默认值：1024。
 
 ### query_queue_mem_used_pct_limit (global)
 
-* 描述：单个 BE 节点中内存使用百分比上限。仅在设置为大于 `0` 后生效。
+* 描述：单个 BE 节点中内存使用百分比上限。仅在设置为大于 `0` 后生效。设置为 `0` 表示没有限制。
 * 默认值：`0`
 * 取值范围：[0, 1]
 
@@ -905,7 +1001,7 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 
 ### query_timeout
 
-* 描述：用于设置查询超时时间，单位为秒。该变量会作用于当前连接中所有的查询语句，以及 INSERT 语句。
+* 描述：用于设置查询超时时间，单位为秒。该变量会作用于当前连接中所有的查询语句。自 v3.4.0 起，`query_timeout` 不再作用于 INSERT 语句。
 * 默认值：300 （5 分钟）
 * 单位：秒
 * 类型：Int
@@ -945,6 +1041,12 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 * 单位：秒
 * 类型：Int
 * 引入版本：v3.1.0
+
+### scan_olap_partition_num_limit
+
+* 描述：在SQL执行计划中, 单表允许的最大扫描分区数.
+* 默认值：0 (无限制)
+* 引入版本：v3.3.9
 
 ### spill_mode (3.0 及以后)
 

@@ -71,7 +71,6 @@ import org.apache.logging.log4j.Logger;
 import org.threeten.extra.PeriodDuration;
 
 import java.io.DataInput;
-import java.io.DataOutput;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -88,6 +87,7 @@ import java.util.stream.Collectors;
 public class TableProperty implements Writable, GsonPostProcessable {
     private static final Logger LOG = LogManager.getLogger(TableProperty.class);
     public static final String DYNAMIC_PARTITION_PROPERTY_PREFIX = "dynamic_partition";
+    public static final String FLAT_JSON_PROPERTY_PREFIX = "flat_json";
     public static final int INVALID = -1;
 
     public static final String BINLOG_PROPERTY_PREFIX = "binlog";
@@ -100,7 +100,9 @@ public class TableProperty implements Writable, GsonPostProcessable {
         DISABLE,    // 0: disable query rewrite
         LOOSE,      // 1: enable query rewrite, and skip the partition version check, still need to check mv partition exist
         CHECKED,    // 2: enable query rewrite, and rewrite only if mv partition version is consistent with table meta
-        NOCHECK;   // 3: enable query rewrite, and rewrite without any check
+        NOCHECK,    // 3: enable query rewrite, and rewrite without any check
+        FORCE_MV;   // 4: force to use mv, if mv contains no ttl; otherwise, use mv for partitions are in ttl range and
+        // use base table for partitions are out of ttl range
 
         public static QueryRewriteConsistencyMode defaultQueryRewriteConsistencyMode() {
             return CHECKED;
@@ -184,8 +186,11 @@ public class TableProperty implements Writable, GsonPostProcessable {
     @SerializedName(value = "properties")
     private Map<String, String> properties;
 
+    private FlatJsonConfig flatJsonConfig;
+
     private transient DynamicPartitionProperty dynamicPartitionProperty =
             new DynamicPartitionProperty(Maps.newHashMap());
+
     // table's default replication num
     private Short replicationNum = RunMode.defaultReplicationNum();
 
@@ -193,6 +198,12 @@ public class TableProperty implements Writable, GsonPostProcessable {
     private int partitionTTLNumber = INVALID;
 
     private PeriodDuration partitionTTL = PeriodDuration.ZERO;
+
+    // This property can be used to specify the retention condition of the partition table or materialized view,
+    // it's a SQL expression, and the partition will be deleted if the condition is not true.
+    private String partitionRetentionCondition = null;
+
+    private String timeDriftConstraintSpec = null;
 
     // This property only applies to materialized views
     // It represents the maximum number of partitions that will be refreshed by a TaskRun refresh
@@ -306,6 +317,8 @@ public class TableProperty implements Writable, GsonPostProcessable {
 
     private Multimap<String, String> location;
 
+    private boolean enablePartitionAggregation = false;
+
     public TableProperty() {
         this(Maps.newLinkedHashMap());
     }
@@ -387,6 +400,8 @@ public class TableProperty implements Writable, GsonPostProcessable {
             case OperationType.OP_ALTER_TABLE_PROPERTIES:
                 buildPartitionTTL();
                 buildPartitionLiveNumber();
+                buildPartitionRetentionCondition();
+                buildTimeDriftConstraint();
                 buildDataCachePartitionDuration();
                 buildLocation();
                 buildStorageCoolDownTTL();
@@ -408,6 +423,7 @@ public class TableProperty implements Writable, GsonPostProcessable {
         buildExcludedTriggerTables();
         buildResourceGroup();
         buildConstraint();
+        buildTimeDriftConstraint();
         buildMvSortKeys();
         buildQueryRewrite();
         buildMVQueryRewriteSwitch();
@@ -428,9 +444,28 @@ public class TableProperty implements Writable, GsonPostProcessable {
         return this;
     }
 
+    public TableProperty buildFlatJsonConfig() {
+        if (properties.containsKey(PropertyAnalyzer.PROPERTIES_FLAT_JSON_ENABLE) ||
+                properties.containsKey(PropertyAnalyzer.PROPERTIES_FLAT_JSON_NULL_FACTOR) ||
+                properties.containsKey(PropertyAnalyzer.PROPERTIES_FLAT_JSON_SPARSITY_FACTOR) ||
+                properties.containsKey(PropertyAnalyzer.PROPERTIES_FLAT_JSON_COLUMN_MAX)) {
+            boolean enableFlatJson = PropertyAnalyzer.analyzeFlatJsonEnabled(properties);
+            double flatJsonNullFactor = PropertyAnalyzer.analyzeFlatJsonNullFactor(properties);
+            double flatJsonSparsityFactory = PropertyAnalyzer.analyzeFlatJsonSparsityFactor(properties);
+            int flatJsonColumnMax = PropertyAnalyzer.analyzeFlatJsonColumnMax(properties);
+            flatJsonConfig = new FlatJsonConfig(enableFlatJson, flatJsonNullFactor,
+                    flatJsonSparsityFactory, flatJsonColumnMax);
+        }
+        return this;
+    }
+
     // just modify binlogConfig, not properties
     public void setBinlogConfig(BinlogConfig binlogConfig) {
         this.binlogConfig = binlogConfig;
+    }
+
+    public void setFlatJsonConfig(FlatJsonConfig flatJsonConfig) {
+        this.flatJsonConfig = flatJsonConfig;
     }
 
     public TableProperty buildDynamicProperty() {
@@ -493,6 +528,16 @@ public class TableProperty implements Writable, GsonPostProcessable {
         partitionRefreshNumber =
                 Integer.parseInt(properties.getOrDefault(PropertyAnalyzer.PROPERTIES_PARTITION_REFRESH_NUMBER,
                         String.valueOf(INVALID)));
+        return this;
+    }
+
+    public TableProperty buildPartitionRetentionCondition() {
+        partitionRetentionCondition = properties.getOrDefault(PropertyAnalyzer.PROPERTIES_PARTITION_RETENTION_CONDITION, "");
+        return this;
+    }
+
+    public TableProperty buildTimeDriftConstraint() {
+        timeDriftConstraintSpec = properties.getOrDefault(PropertyAnalyzer.PROPERTIES_TIME_DRIFT_CONSTRAINT, "");
         return this;
     }
 
@@ -762,6 +807,14 @@ public class TableProperty implements Writable, GsonPostProcessable {
         return this;
     }
 
+    public TableProperty buildEnablePartitionAggregation() {
+        if (properties.containsKey(PropertyAnalyzer.PROPERTIES_ENABLE_PARTITION_AGGREGATION)) {
+            enablePartitionAggregation = Boolean.parseBoolean(
+                    properties.getOrDefault(PropertyAnalyzer.PROPERTIES_ENABLE_PARTITION_AGGREGATION, "false"));
+        }
+        return this;
+    }
+
     public TableProperty buildStorageCoolDownTTL() {
         if (properties.containsKey(PropertyAnalyzer.PROPERTIES_STORAGE_COOLDOWN_TTL)) {
             String storageCoolDownTTL = properties.get(PropertyAnalyzer.PROPERTIES_STORAGE_COOLDOWN_TTL);
@@ -835,6 +888,22 @@ public class TableProperty implements Writable, GsonPostProcessable {
 
     public PeriodDuration getPartitionTTL() {
         return partitionTTL;
+    }
+
+    public String getPartitionRetentionCondition() {
+        return partitionRetentionCondition;
+    }
+
+    public void setPartitionRetentionCondition(String partitionRetentionCondition) {
+        this.partitionRetentionCondition = partitionRetentionCondition;
+    }
+
+    public String getTimeDriftConstraintSpec() {
+        return timeDriftConstraintSpec;
+    }
+
+    public void setTimeDriftConstraintSpec(String spec) {
+        this.timeDriftConstraintSpec = spec;
     }
 
     public int getAutoRefreshPartitionsLimit() {
@@ -925,6 +994,10 @@ public class TableProperty implements Writable, GsonPostProcessable {
         return enablePersistentIndex;
     }
 
+    public boolean enablePartitionAggregation() {
+        return enablePartitionAggregation;
+    }
+
     public int primaryIndexCacheExpireSec() {
         return primaryIndexCacheExpireSec;
     }
@@ -1009,6 +1082,10 @@ public class TableProperty implements Writable, GsonPostProcessable {
         return binlogConfig;
     }
 
+    public FlatJsonConfig getFlatJsonConfig() {
+        return flatJsonConfig;
+    }
+
     public List<UniqueConstraint> getUniqueConstraints() {
         return uniqueConstraints;
     }
@@ -1057,10 +1134,7 @@ public class TableProperty implements Writable, GsonPostProcessable {
         return useFastSchemaEvolution;
     }
 
-    @Override
-    public void write(DataOutput out) throws IOException {
-        Text.writeString(out, GsonUtils.GSON.toJson(this));
-    }
+
 
     public static TableProperty read(DataInput in) throws IOException {
         return GsonUtils.GSON.fromJson(Text.readString(in), TableProperty.class);
@@ -1083,10 +1157,13 @@ public class TableProperty implements Writable, GsonPostProcessable {
         buildCompressionType();
         buildWriteQuorum();
         buildPartitionLiveNumber();
+        buildPartitionRetentionCondition();
+        buildTimeDriftConstraint();
         buildReplicatedStorage();
         buildBucketSize();
         buildEnableLoadProfile();
         buildBinlogConfig();
+        buildFlatJsonConfig();
         buildBinlogAvailableVersion();
         buildDataCachePartitionDuration();
         buildUseFastSchemaEvolution();
@@ -1094,5 +1171,7 @@ public class TableProperty implements Writable, GsonPostProcessable {
         buildMvProperties();
         buildLocation();
         buildBaseCompactionForbiddenTimeRanges();
+        buildEnablePartitionAggregation();
+        buildMutableBucketNum();
     }
 }

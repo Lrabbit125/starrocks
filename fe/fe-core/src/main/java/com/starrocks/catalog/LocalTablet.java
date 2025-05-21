@@ -45,6 +45,7 @@ import com.starrocks.clone.TabletSchedCtx.Priority;
 import com.starrocks.common.CloseableLock;
 import com.starrocks.common.Config;
 import com.starrocks.persist.gson.GsonPostProcessable;
+import com.starrocks.qe.SimpleScheduler;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.system.Backend;
@@ -275,6 +276,9 @@ public class LocalTablet extends Tablet implements GsonPostProcessable {
                     continue;
                 }
 
+                if (SimpleScheduler.isInBlocklist(replica.getBackendId())) {
+                    continue;
+                }
                 ReplicaState state = replica.getState();
                 if (infoService.checkBackendAlive(replica.getBackendId())
                         && (state == ReplicaState.NORMAL || state == ReplicaState.ALTER)) {
@@ -291,7 +295,7 @@ public class LocalTablet extends Tablet implements GsonPostProcessable {
                                      long visibleVersion, long localBeId, int schemaHash) {
         try (CloseableLock ignored = CloseableLock.lock(this.rwLock.readLock())) {
             for (Replica replica : replicas) {
-                if (replica.isBad()) {
+                if (replica.isBad() || replica.isErrorState()) {
                     continue;
                 }
 
@@ -326,7 +330,7 @@ public class LocalTablet extends Tablet implements GsonPostProcessable {
         int size = 0;
         try (CloseableLock ignored = CloseableLock.lock(this.rwLock.readLock())) {
             for (Replica replica : replicas) {
-                if (replica.isBad()) {
+                if (replica.isBad() || replica.isErrorState()) {
                     continue;
                 }
 

@@ -1316,6 +1316,7 @@ public class AggregateTest extends PlanTestBase {
 
     @Test
     public void testMultiCountDistinctWithNoneGroup() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1b), count(distinct t1c) from test_all_type";
         String plan = getFragmentPlan(sql);
         assertContains(plan, "  MultiCastDataSinks\n" +
@@ -1334,19 +1335,24 @@ public class AggregateTest extends PlanTestBase {
         assertContains(plan, "  11:AGGREGATE (update serialize)\n" +
                 "  |  STREAMING\n" +
                 "  |  group by: 14: t1c");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
     public void testMultiCountDistinctWithNoneGroup1() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "with tmp1 as (select 'a' as a from dual), tmp2 as (select 'b' as b from dual) " +
                 "select count(distinct t1b), count(distinct t1c), count(distinct t1.a), count(distinct t2.b) " +
                 "from test_all_type join tmp1 t1 join tmp2 t2 join tmp1 t3 join tmp2 t4";
         Pair<String, ExecPlan> pair = UtFrameUtils.getPlanAndFragment(connectContext, sql);
+        System.out.println(pair.first);
         assertContains(pair.first, "CTEAnchor(cteid=3)");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
     public void testMultiCountDistinctWithNoneGroup2() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1b), count(distinct t1c), sum(t1c), max(t1b) from test_all_type";
         String plan = getFragmentPlan(sql);
         assertContains(plan, "MultiCastDataSinks\n" +
@@ -1372,23 +1378,28 @@ public class AggregateTest extends PlanTestBase {
                 "  |  \n" +
                 "  5:AGGREGATE (merge serialize)\n" +
                 "  |  group by: 15: t1b");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
     public void testMultiCountDistinctWithNoneGroup3() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1b), count(distinct t1c) from test_all_type";
         String plan = getFragmentPlan(sql);
         assertContains(plan, "18:NESTLOOP JOIN\n" +
                 "  |  join op: CROSS JOIN");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
     public void testMultiCountDistinctWithNoneGroup4() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1b + 1), count(distinct t1c + 2) from test_all_type";
         String plan = getFragmentPlan(sql);
         assertContains(plan, "1:Project\n" +
                 "  |  <slot 11> : CAST(2: t1b AS INT) + 1\n" +
                 "  |  <slot 12> : CAST(3: t1c AS BIGINT) + 2");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
@@ -1658,11 +1669,11 @@ public class AggregateTest extends PlanTestBase {
                 "sum(arrays_overlap(v3, [1])) as q2, " +
                 "sum(arrays_overlap(v3, [1])) as q3 FROM tarray;");
         assertContains(plan, "  2:AGGREGATE (update finalize)\n" +
-                "  |  output: sum(arrays_overlap(3: v3, CAST([1] AS ARRAY<BIGINT>)))\n" +
+                "  |  output: sum(4: arrays_overlap)\n" +
                 "  |  group by: \n" +
                 "  |  \n" +
                 "  1:Project\n" +
-                "  |  <slot 3> : 3: v3\n" +
+                "  |  <slot 4> : arrays_overlap(3: v3, CAST([1] AS ARRAY<BIGINT>))\n" +
                 "  |  \n" +
                 "  0:OlapScanNode");
     }
@@ -1970,6 +1981,86 @@ public class AggregateTest extends PlanTestBase {
         assertContains(plan, "<slot 8> : 11: bitmap_count\n" +
                 "  |  <slot 9> : 12: bitmap_count\n" +
                 "  |  <slot 10> : 11: bitmap_count - 12: bitmap_count");
+    }
+
+    @Test
+    public void testCountDistinctImplementation1() throws Exception {
+        // normal case
+        String sql = "select " +
+                "count(distinct t1a)," + // varchar
+                "count(distinct t1b)," + // smallint
+                "count(distinct t1c)," + // int
+                "count(distinct t1d)," + // bigint
+                "count(distinct t1e)," + // float
+                "count(distinct t1f)," + //double
+                "count(distinct t1g)," + // bigint
+                "count(distinct id_datetime)," + // datetime
+                "count(distinct id_date)," + // date
+                "count(distinct id_decimal)" + //decimal
+                "from test_all_type_not_null";
+        connectContext.getSessionVariable().setCountDistinctImplementation("ndv");
+        String plan = getFragmentPlan(sql);
+        assertContains(plan, "  |  output: ndv(7: t1g), ndv(8: id_datetime), " +
+                "ndv(9: id_date), ndv(10: id_decimal), ndv(1: t1a), ndv(2: t1b), " +
+                "ndv(3: t1c), ndv(4: t1d), ndv(5: t1e), ndv(6: t1f)\n" +
+                "  |  group by: ");
+        sql = "select count(distinct if(v1 = 1, v2, -999)) as c1, \n" +
+                "count(distinct if(v1 = 1, v3, -999)) as c2,\n" +
+                "count(distinct if(v1 = 1, v2, -999)) - " +
+                "count(distinct if(v1 = 1, v3, -999))\n" +
+                "from t0;";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, " |  output: ndv(if(9: expr, 2: v2, -999)), " +
+                "ndv(if(9: expr, 3: v3, -999))\n" +
+                "  |  group by: ");
+
+        sql = "select count(distinct v1, v2) from t0;";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "  1:AGGREGATE (update serialize)\n" +
+                        "  |  STREAMING\n" +
+                        "  |  group by: 1: v1, 2: v2");
+        connectContext.getSessionVariable().setCountDistinctImplementation("default");
+    }
+
+    @Test
+    public void testCountDistinctImplementation2() throws Exception {
+        // normal case
+        String sql = "select " +
+                "count(distinct t1a)," + // varchar
+                "count(distinct t1b)," + // smallint
+                "count(distinct t1c)," + // int
+                "count(distinct t1d)," + // bigint
+                "count(distinct t1e)," + // float
+                "count(distinct t1f)," + //double
+                "count(distinct t1g)," + // bigint
+                "count(distinct id_datetime)," + // datetime
+                "count(distinct id_date)," + // date
+                "count(distinct id_decimal)" + //decimal
+                "from test_all_type_not_null";
+        connectContext.getSessionVariable().setCountDistinctImplementation("multi_count_distinct");
+        String plan = getFragmentPlan(sql);
+        assertContains(plan, "  |  output: multi_distinct_count(7: t1g), multi_distinct_count(8: id_datetime), " +
+                "multi_distinct_count(9: id_date), multi_distinct_count(10: id_decimal), " +
+                "multi_distinct_count(1: t1a), multi_distinct_count(2: t1b), " +
+                "multi_distinct_count(3: t1c), multi_distinct_count(4: t1d), " +
+                "multi_distinct_count(5: t1e), multi_distinct_count(6: t1f)\n" +
+                "  |  group by: ");
+        sql = "select count(distinct if(v1 = 1, v2, -999)) as c1, \n" +
+                "count(distinct if(v1 = 1, v3, -999)) as c2,\n" +
+                "count(distinct if(v1 = 1, v2, -999)) - " +
+                "count(distinct if(v1 = 1, v3, -999))\n" +
+                "from t0;";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "  2:AGGREGATE (update finalize)\n" +
+                "  |  output: multi_distinct_count(if(9: expr, 2: v2, -999)), " +
+                "multi_distinct_count(if(9: expr, 3: v3, -999))\n" +
+                "  |  group by: ");
+        sql = "select count(distinct v1, v2) from t0;";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "  1:AGGREGATE (update serialize)\n" +
+                "  |  STREAMING\n" +
+                "  |  group by: 1: v1, 2: v2");
+        connectContext.getSessionVariable().setCountDistinctImplementation("default");
     }
 
     @Test
@@ -2337,6 +2428,7 @@ public class AggregateTest extends PlanTestBase {
 
     @Test
     public void testMultiCountDistinctWithMoreGroupBy() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1c), count(distinct t1d), count(distinct t1e)" +
                 "from test_all_type group by t1a, t1b";
 
@@ -2348,6 +2440,7 @@ public class AggregateTest extends PlanTestBase {
 
         plan = getFragmentPlan(sql);
         assertNotContains(plan, "multi_distinct_count");
+        FeConstants.runningUnitTest = false;
     }
 
     @Test
@@ -2789,8 +2882,9 @@ public class AggregateTest extends PlanTestBase {
     public void testCountIfTypeCheck() throws Exception {
         String sql = "select count_if(v1 is null) from t0";
         String plan = getVerboseExplain(sql);
-        assertContains(plan, "aggregate: count[(if[([4: expr, BOOLEAN, false], 1, NULL); " +
-                "args: BOOLEAN,BIGINT,BIGINT; result: BIGINT; args nullable: true; result nullable: true]);");
+        System.out.println(plan);
+        assertContains(plan, "aggregate: count_if[(1, [4: expr, BOOLEAN, false]); " +
+                "args: TINYINT,BOOLEAN; result: BIGINT; args nullable: false; result nullable: false]");
     }
 
     @Test
@@ -2855,12 +2949,14 @@ public class AggregateTest extends PlanTestBase {
 
     @Test
     public void testMultiCountDistinctWithHavingLimit() throws Exception {
+        FeConstants.runningUnitTest = true;
         String sql = "select count(distinct t1b) as x, count(distinct t1c) as y from test_all_type having x = 2";
         String plan = getFragmentPlan(sql);
         assertContains(plan, "  8:AGGREGATE (merge finalize)\n" +
                 "  |  output: count(11: count)\n" +
                 "  |  group by: \n" +
                 "  |  having: 11: count = 2");
+        FeConstants.runningUnitTest = false;
 
         sql = "select count(distinct t1b) as x, count(distinct t1c) as y from test_all_type having x = 2 limit 10";
         plan = getFragmentPlan(sql);
@@ -2891,6 +2987,18 @@ public class AggregateTest extends PlanTestBase {
     }
 
     @Test
+    public void testOnlyGroupByLimit() throws Exception {
+        FeConstants.runningUnitTest = true;
+        String sql = "select distinct v1 + v2 as vx from t0 limit 10";
+        String plan = getFragmentPlan(sql);
+        assertContains(plan, "  2:AGGREGATE (update serialize)\n" +
+                "  |  STREAMING\n" +
+                "  |  group by: 4: expr\n" +
+                "  |  limit: 10");
+        FeConstants.runningUnitTest = false;
+    }
+
+    @Test
     public void testHavingAggregate() throws Exception {
         String sql = "select * from (" +
                 "select sum(v1), f2, v3 from " +
@@ -2902,5 +3010,29 @@ public class AggregateTest extends PlanTestBase {
                 "  |  output: sum(1: v1)\n" +
                 "  |  group by: 2: v2, 3: v3\n" +
                 "  |  having: 2: v2 + 2 + 5: sum > 0");
+    }
+
+    @Test
+    public void testOneTabletMultiDistinctFunctionHasSingleDistinctColAndOneGroupBy() throws Exception {
+        String sql = "select\n" +
+                "  t1.k1\n" +
+                "  , count(distinct k2) \n" +
+                "  , array_agg(distinct k2)\n" +
+                "from\n" +
+                "  db1.tbl1 t1\n" +
+                "group by\n" +
+                "  k1\n" +
+                "  ;";
+        String plan = getFragmentPlan(sql);
+        assertNotContains(plan, " 1:AGGREGATE (update finalize)\n" +
+                "  |  output: count(DISTINCT 2: k2), array_agg(DISTINCT 2: k2)\n" +
+                "  |  group by: 1: k1");
+
+        assertContains(plan, "1:AGGREGATE (update finalize)\n" +
+                "  |  output: multi_distinct_count(2: k2), array_agg_distinct(2: k2)\n" +
+                "  |  group by: 1: k1\n" +
+                "  |  \n" +
+                "  0:OlapScanNode\n" +
+                "     TABLE: tbl1");
     }
 }

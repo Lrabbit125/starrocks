@@ -40,7 +40,7 @@ import com.starrocks.catalog.Database;
 import com.starrocks.catalog.TabletInvertedIndex;
 import com.starrocks.common.AnalysisException;
 import com.starrocks.common.DdlException;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.lake.StarOSAgent;
 import com.starrocks.persist.EditLog;
 import com.starrocks.qe.ConnectContext;
@@ -289,7 +289,7 @@ public class SystemInfoServiceTest {
     public void addComputeNodeTest() throws AnalysisException {
         clearAllBackend();
         AddComputeNodeClause stmt = new AddComputeNodeClause(Lists.newArrayList("192.168.0.1:1234"),
-                WarehouseManager.DEFAULT_WAREHOUSE_NAME, NodePosition.ZERO);
+                WarehouseManager.DEFAULT_WAREHOUSE_NAME, "", NodePosition.ZERO);
 
         com.starrocks.sql.analyzer.Analyzer analyzer = new com.starrocks.sql.analyzer.Analyzer(
                 com.starrocks.sql.analyzer.Analyzer.AnalyzerVisitor.getInstance());
@@ -413,7 +413,7 @@ public class SystemInfoServiceTest {
     public void testSeqChooseComputeNodes() {
         clearAllBackend();
         AddComputeNodeClause stmt = new AddComputeNodeClause(Lists.newArrayList("192.168.0.1:1234"),
-                WarehouseManager.DEFAULT_WAREHOUSE_NAME, NodePosition.ZERO);
+                WarehouseManager.DEFAULT_WAREHOUSE_NAME, "", NodePosition.ZERO);
 
         com.starrocks.sql.analyzer.Analyzer analyzer = new com.starrocks.sql.analyzer.Analyzer(
                 com.starrocks.sql.analyzer.Analyzer.AnalyzerVisitor.getInstance());
@@ -447,7 +447,7 @@ public class SystemInfoServiceTest {
         Assert.assertEquals(1, computeNods.size());
 
         // test seqChooseBackendOrComputeId func
-        Exception exception = Assertions.assertThrows(UserException.class, () -> {
+        Exception exception = Assertions.assertThrows(StarRocksException.class, () -> {
             GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo().getNodeSelector().seqChooseBackendOrComputeId();
         });
         Assert.assertTrue(exception.getMessage().contains("No backend alive."));
@@ -466,10 +466,21 @@ public class SystemInfoServiceTest {
             }
         };
 
-        exception = Assert.assertThrows(UserException.class, () -> {
+        exception = Assert.assertThrows(StarRocksException.class, () -> {
             GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo().getNodeSelector().seqChooseBackendOrComputeId();
         });
         Assert.assertTrue(exception.getMessage().contains("No backend or compute node alive."));
+    }
+
+    @Test
+    public void testGetDecommissionedBackends() throws Exception {
+        for (int i = 100; i < 200; i++) {
+            Backend be = new Backend(i, "decommissionedHost", 1000);
+            be.setStarletPort(i);
+            systemInfoService.addBackend(be);
+            be.setDecommissioned(true);
+        }
+        Assert.assertTrue(systemInfoService.getDecommissionedBackendIds().size() == 100);
     }
 
 }

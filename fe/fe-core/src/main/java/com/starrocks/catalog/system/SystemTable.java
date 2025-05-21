@@ -18,6 +18,7 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Lists;
 import com.starrocks.analysis.DescriptorTable.ReferencedPartitionInfo;
 import com.starrocks.catalog.Column;
+import com.starrocks.catalog.ScalarType;
 import com.starrocks.catalog.Table;
 import com.starrocks.catalog.Type;
 import com.starrocks.catalog.system.information.BeConfigsSystemTable;
@@ -35,6 +36,8 @@ import com.starrocks.catalog.system.information.TaskRunsSystemTable;
 import com.starrocks.catalog.system.information.TasksSystemTable;
 import com.starrocks.catalog.system.information.TemporaryTablesTable;
 import com.starrocks.catalog.system.information.ViewsSystemTable;
+import com.starrocks.catalog.system.information.WarehouseMetricsSystemTable;
+import com.starrocks.catalog.system.information.WarehouseQueriesSystemTable;
 import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 import com.starrocks.thrift.TSchemaTable;
 import com.starrocks.thrift.TSchemaTableType;
@@ -74,6 +77,8 @@ public class SystemTable extends Table {
                     .add(TasksSystemTable.NAME)
                     .add(TemporaryTablesTable.NAME)
                     .add(ViewsSystemTable.NAME)
+                    .add(WarehouseMetricsSystemTable.NAME)
+                    .add(WarehouseQueriesSystemTable.NAME)
                     .build();
 
     private final TSchemaTableType schemaTableType;
@@ -140,6 +145,11 @@ public class SystemTable extends Table {
             return column(name, type, true);
         }
 
+        public Builder column(String name, Type type, String comment) {
+            columns.add(new Column(name, type, false, null, true, null, comment));
+            return this;
+        }
+
         public Builder column(String name, Type type, boolean nullable) {
             columns.add(new Column(name, type, false, null, nullable, null, ""));
             return this;
@@ -185,5 +195,9 @@ public class SystemTable extends Table {
 
     public static boolean needQueryFromLeader(String tableName) {
         return QUERY_FROM_LEADER_TABLES.contains(tableName);
+    }
+
+    public static ScalarType createNameType() {
+        return ScalarType.createVarchar(NAME_CHAR_LEN);
     }
 }

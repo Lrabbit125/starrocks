@@ -16,7 +16,6 @@ package com.starrocks.lake.compaction;
 
 import com.starrocks.catalog.Database;
 import com.starrocks.catalog.PhysicalPartition;
-import com.starrocks.catalog.PhysicalPartitionImpl;
 import com.starrocks.catalog.Table;
 import com.starrocks.proto.CompactStat;
 import mockit.Mock;
@@ -34,7 +33,7 @@ public class CompactionJobTest {
     public void testGetResult() {
         Database db = new Database();
         Table table = new Table(Table.TableType.CLOUD_NATIVE);
-        PhysicalPartition partition = new PhysicalPartitionImpl(0, "", 1, 2, null);
+        PhysicalPartition partition = new PhysicalPartition(0, "", 1, null);
         CompactionJob job = new CompactionJob(db, table, partition, 10010, true);
 
         Assert.assertTrue(job.getAllowPartialSuccess());
@@ -79,7 +78,7 @@ public class CompactionJobTest {
     public void testBuildTabletCommitInfo() {
         Database db = new Database();
         Table table = new Table(Table.TableType.CLOUD_NATIVE);
-        PhysicalPartition partition = new PhysicalPartitionImpl(0, "", 1, 2, null);
+        PhysicalPartition partition = new PhysicalPartition(0, "", 1, null);
         CompactionJob job = new CompactionJob(db, table, partition, 10010, false);
         assertDoesNotThrow(() -> {
             job.buildTabletCommitInfo();
@@ -90,14 +89,11 @@ public class CompactionJobTest {
     public void testGetExecutionProfile() {
         Database db = new Database();
         Table table = new Table(Table.TableType.CLOUD_NATIVE);
-        PhysicalPartition partition = new PhysicalPartitionImpl(0, "", 1, 2, null);
+        PhysicalPartition partition = new PhysicalPartition(0, "", 1, null);
         CompactionJob job = new CompactionJob(db, table, partition, 10010, true);
 
         Assert.assertTrue(job.getExecutionProfile().isEmpty());
-
-        List<CompactionTask> list = new ArrayList<>();
-        list.add(new CompactionTask(100));
-        job.setTasks(list);
+        job.setAggregateTask(new CompactionTask(100));
         job.finish();
         new MockUp<CompactionTask>() {
             @Mock
@@ -109,7 +105,10 @@ public class CompactionJobTest {
                 stat.readBytesRemote = 3L;
                 stat.readTimeLocal = 4L;
                 stat.readBytesLocal = 5L;
-                stat.inQueueTimeSec = 6;
+                stat.readSegmentCount = 6L;
+                stat.writeSegmentCount = 7L;
+                stat.writeSegmentBytes = 8L;
+                stat.inQueueTimeSec = 9;
                 list.add(stat);
                 return list;
             }
@@ -117,5 +116,26 @@ public class CompactionJobTest {
 
         String s = job.getExecutionProfile();
         Assert.assertFalse(s.isEmpty());
+    }
+
+    @Test
+    public void testSuccessCompactInputFIleSize() {
+        Database db = new Database();
+        Table table = new Table(Table.TableType.CLOUD_NATIVE);
+        PhysicalPartition partition = new PhysicalPartition(0, "", 1, null);
+        CompactionJob job = new CompactionJob(db, table, partition, 10010, true);
+
+        Assert.assertTrue(job.getAllowPartialSuccess());
+        List<CompactionTask> list = new ArrayList<>();
+        list.add(new CompactionTask(100));
+        list.add(new CompactionTask(101));
+        job.setTasks(list);
+        new MockUp<CompactionTask>() {
+            @Mock
+            public CompactionTask.TaskResult getResult() {
+                return CompactionTask.TaskResult.NOT_FINISHED;
+            }
+        };
+        Assert.assertEquals(job.getSuccessCompactInputFileSize(), 0);
     }
 }

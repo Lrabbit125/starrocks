@@ -28,6 +28,7 @@ import com.starrocks.analysis.CaseWhenClause;
 import com.starrocks.analysis.CompoundPredicate;
 import com.starrocks.analysis.Expr;
 import com.starrocks.analysis.FunctionCallExpr;
+import com.starrocks.analysis.HintNode;
 import com.starrocks.analysis.IntLiteral;
 import com.starrocks.analysis.JoinOperator;
 import com.starrocks.analysis.LiteralExpr;
@@ -35,6 +36,7 @@ import com.starrocks.analysis.OrderByElement;
 import com.starrocks.analysis.ParseNode;
 import com.starrocks.analysis.SlotRef;
 import com.starrocks.analysis.TableName;
+import com.starrocks.authorization.SecurityPolicyRewriteRule;
 import com.starrocks.catalog.Column;
 import com.starrocks.catalog.ConnectorView;
 import com.starrocks.catalog.Database;
@@ -56,7 +58,6 @@ import com.starrocks.common.ErrorReport;
 import com.starrocks.common.Pair;
 import com.starrocks.common.profile.Timer;
 import com.starrocks.common.profile.Tracers;
-import com.starrocks.privilege.SecurityPolicyRewriteRule;
 import com.starrocks.qe.ConnectContext;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.server.MetadataMgr;
@@ -133,6 +134,9 @@ public class QueryAnalyzer {
         }
 
         public Void process(ParseNode node, Scope scope) {
+            if (session.getSessionVariable().isDisableGeneratedColumnRewrite()) {
+                return null;
+            }
             return node.accept(this, scope);
         }
 
@@ -237,7 +241,7 @@ public class QueryAnalyzer {
         }
 
         @Override
-        public Void visitSubquery(SubqueryRelation subquery, Scope scope) {
+        public Void visitSubqueryRelation(SubqueryRelation subquery, Scope scope) {
             QueryRelation queryRelation = subquery.getQueryStatement().getQueryRelation();
             if (queryRelation instanceof SelectRelation) {
                 SelectRelation childSelectRelation = (SelectRelation) queryRelation;
@@ -625,9 +629,9 @@ public class QueryAnalyzer {
                 for (Column column : fullSchema) {
                     // TODO: avoid analyze visible or not each time, cache it in schema
                     if (needPruneScanColumns && !column.isKey() &&
-                            !bucketColumns.contains(column.getName()) &&
-                            !partitionColumns.contains(column.getName()) &&
-                            !pruneScanColumns.contains(column.getName().toLowerCase())) {
+                            bucketColumns.stream().noneMatch(column.getName()::equalsIgnoreCase) &&
+                            partitionColumns.stream().noneMatch(column.getName()::equalsIgnoreCase) &&
+                            pruneScanColumns.stream().noneMatch(column.getName()::equalsIgnoreCase)) {
                         // reduce unnecessary columns init, but must init key columns/bucket columns/partition columns
                         continue;
                     }
@@ -657,10 +661,10 @@ public class QueryAnalyzer {
 
                 if (table.isHiveTable()) {
                     HiveTable hiveTable = (HiveTable) table;
-                    session.getDumpInfo().addHMSTable(hiveTable.getResourceName(), hiveTable.getDbName(),
-                            hiveTable.getTableName());
+                    session.getDumpInfo().addHMSTable(hiveTable.getResourceName(), hiveTable.getCatalogDBName(),
+                            hiveTable.getCatalogTableName());
                     HiveMetaStoreTableDumpInfo hiveMetaStoreTableDumpInfo = session.getDumpInfo().getHMSTable(
-                            hiveTable.getResourceName(), hiveTable.getDbName(), hiveTable.getTableName());
+                            hiveTable.getResourceName(), hiveTable.getCatalogDBName(), hiveTable.getCatalogTableName());
                     hiveMetaStoreTableDumpInfo.setPartColumnNames(hiveTable.getPartitionColumnNames());
                     hiveMetaStoreTableDumpInfo.setDataColumnNames(hiveTable.getDataColumnNames());
                     Resource resource = GlobalStateMgr.getCurrentState().getResourceMgr().
@@ -873,24 +877,24 @@ public class QueryAnalyzer {
         }
 
         private void analyzeJoinHints(JoinRelation join) {
-            if (JoinOperator.HINT_BROADCAST.equals(join.getJoinHint())) {
+            if (HintNode.HINT_JOIN_BROADCAST.equals(join.getJoinHint())) {
                 if (join.getJoinOp() == JoinOperator.RIGHT_OUTER_JOIN
                         || join.getJoinOp() == JoinOperator.FULL_OUTER_JOIN
                         || join.getJoinOp() == JoinOperator.RIGHT_SEMI_JOIN
                         || join.getJoinOp() == JoinOperator.RIGHT_ANTI_JOIN) {
                     throw new SemanticException(join.getJoinOp().toString() + " does not support BROADCAST.");
                 }
-            } else if (JoinOperator.HINT_SHUFFLE.equals(join.getJoinHint())) {
+            } else if (HintNode.HINT_JOIN_SHUFFLE.equals(join.getJoinHint())) {
                 if (join.getJoinOp() == JoinOperator.CROSS_JOIN ||
                         (join.getJoinOp() == JoinOperator.INNER_JOIN && join.getOnPredicate() == null)) {
                     throw new SemanticException("CROSS JOIN does not support SHUFFLE.");
                 }
-            } else if (JoinOperator.HINT_BUCKET.equals(join.getJoinHint()) ||
-                    JoinOperator.HINT_COLOCATE.equals(join.getJoinHint())) {
+            } else if (HintNode.HINT_JOIN_BUCKET.equals(join.getJoinHint()) ||
+                    HintNode.HINT_JOIN_COLOCATE.equals(join.getJoinHint())) {
                 if (join.getJoinOp() == JoinOperator.CROSS_JOIN) {
                     throw new SemanticException("CROSS JOIN does not support " + join.getJoinHint() + ".");
                 }
-            } else if (JoinOperator.HINT_SKEW.equals(join.getJoinHint())) {
+            } else if (HintNode.HINT_JOIN_SKEW.equals(join.getJoinHint())) {
                 if (join.getJoinOp() == JoinOperator.CROSS_JOIN ||
                         (join.getJoinOp() == JoinOperator.INNER_JOIN && join.getOnPredicate() == null)) {
                     throw new SemanticException("CROSS JOIN does not support SKEW JOIN optimize");
@@ -918,13 +922,13 @@ public class QueryAnalyzer {
                 } else {
                     throw new SemanticException("Skew join values must be specified");
                 }
-            } else if (!JoinOperator.HINT_UNREORDER.equals(join.getJoinHint())) {
+            } else if (!HintNode.HINT_JOIN_UNREORDER.equals(join.getJoinHint())) {
                 throw new SemanticException("JOIN hint not recognized: " + join.getJoinHint());
             }
         }
 
         @Override
-        public Scope visitSubquery(SubqueryRelation subquery, Scope context) {
+        public Scope visitSubqueryRelation(SubqueryRelation subquery, Scope context) {
             if (subquery.getResolveTableName() != null && subquery.getResolveTableName().getTbl() == null) {
                 ErrorReport.reportSemanticException(ErrorCode.ERR_DERIVED_MUST_HAVE_ALIAS);
             }
@@ -1391,7 +1395,7 @@ public class QueryAnalyzer {
 
             Database db;
             try (Timer ignored = Tracers.watchScope("AnalyzeDatabase")) {
-                db = metadataMgr.getDb(catalogName, dbName);
+                db = metadataMgr.getDb(session, catalogName, dbName);
             }
 
             MetaUtils.checkDbNullAndReport(db, dbName);
@@ -1400,13 +1404,13 @@ public class QueryAnalyzer {
             if (tableRelation.isSyncMVQuery()) {
                 try (Timer ignored = Tracers.watchScope("AnalyzeSyncMV")) {
                     Pair<Table, MaterializedIndexMeta> materializedIndex =
-                            metadataMgr.getMaterializedViewIndex(catalogName, dbName, tbName);
+                            GlobalStateMgr.getCurrentState().getLocalMetastore().getMaterializedViewIndex(dbName, tbName);
                     if (materializedIndex != null) {
                         Table mvTable = materializedIndex.first;
                         Preconditions.checkState(mvTable != null);
                         Preconditions.checkState(mvTable instanceof OlapTable);
                         // Add read lock to avoid concurrent problems.
-                        OlapTable mvOlapTable = new OlapTable();
+                        OlapTable mvOlapTable = new OlapTable(mvTable.getType());
                         ((OlapTable) mvTable).copyOnlyForQuery(mvOlapTable);
                         // Copy the necessary olap table meta to avoid changing original meta;
                         mvOlapTable.setBaseIndexId(materializedIndex.second.getIndexId());
@@ -1420,7 +1424,7 @@ public class QueryAnalyzer {
                 }
                 if (table == null) {
                     try (Timer ignored = Tracers.watchScope("AnalyzeTable")) {
-                        table = metadataMgr.getTable(catalogName, dbName, tbName);
+                        table = metadataMgr.getTable(session, catalogName, dbName, tbName);
                     }
                 }
             }
@@ -1452,6 +1456,10 @@ public class QueryAnalyzer {
                         }
                     }
                 }
+            }
+
+            if (table instanceof OlapTable) {
+                ((OlapTable) table).maySetDatabaseName(db.getFullName());
             }
 
             return table;

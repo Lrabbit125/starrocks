@@ -242,7 +242,7 @@ Used for MySQL client compatibility. No practical usage.
 * **Data type**: String
 * **Introduced in**: v3.1.11, v3.2.5
 
-### query_excluding_mv_names(
+### query_excluding_mv_names
 
 * **Description**: Specifies the name of the asynchronous materialized views to exclude from query execution. You can use this variable to limit the number of candidate materialized views and reduce the time of query rewrite in the optimizer. `query_including_mv_names` takes effect prior to this item.
 * **Default**: empty
@@ -297,6 +297,44 @@ Used for MySQL client compatibility. No practical usage.
 * **Description**: Whether to enable materialized view plan cache, which can optimize the automatic rewrite performance of materialized views. Setting it to `true` indicates enabling it.
 * **Default**: true
 * **Introduced in**: v2.5.13, v3.0.7, v3.1.4, v3.2.0, v3.3.0
+
+### enable_parquet_reader_bloom_filter
+
+* **Description**: Whether to enable the bloom filter of Parquet file to improve performance. `true` indicates enabling the bloom filter, and `false` indicates disabling it. You can also control this behavior on system level using the BE configuration `parquet_reader_bloom_filter_enable`. Bloom filters in Parquet are maintained **at the column level within each row group**. If a Parquet file contains bloom filters for certain columns, queries can use predicates on those columns to efficiently skip row groups.
+* **Default**: true
+* **Introduced in**: v3.5
+
+### enable_plan_advisor
+
+* **Description**: Whether to enable Query Feedback feature for slow queries and manually marked queries.
+* **Default**: true
+* **Introduced in**: v3.4.0
+
+### enable_plan_analyzer
+
+* **Description**: Whether to enable Query Feedback feature for all queries. This variable takes effect only when `enable_plan_advisor` is set to `true`.
+* **Default**: false
+* **Introduced in**: v3.4.0
+
+### enable_parquet_reader_bloom_filter
+
+* **Default**: true
+* **Type**: Boolean
+* **Unit**: -
+* **Description**: Whether to enable Bloom Filter optimization when reading Parquet files.
+  * `true` (Default): Enable Bloom Filter optimization when reading Parquet files.
+  * `false`: Disable Bloom Filter optimization when reading Parquet files.
+* **Introduced in**: v3.5.0
+
+### enable_parquet_reader_page_index
+
+* **Default**: true
+* **Type**: Boolean
+* **Unit**: -
+* **Description**: Whether to enable Page Index optimization when reading Parquet files.
+  * `true` (Default): Enable Page Index optimization when reading Parquet files.
+  * `false`: Disable Page Index optimization when reading Parquet files.
+* **Introduced in**: v3.5.0
 
 ### follower_query_forward_mode
 
@@ -373,6 +411,14 @@ Used to enable the streaming pre-aggregations. The default value is `false`, mea
 
 Used for MySQL client compatibility. No practical usage.
 
+### dynamic_overwrite
+
+* **Description**: Whether to enable the [Dynamic Overwrite](./sql-statements/loading_unloading/INSERT.md#dynamic-overwrite) semantic for INSERT OVERWRITE with partitioned tables. Valid values:
+  * `true`: Enables Dynamic Overwrite.
+  * `false`: Disables Dynamic Overwrite and uses the default semantic.
+* **Default**: false
+* **Introduced in**: v3.4.0
+
 <!--
 ### enable_collect_table_level_scan_stats (Invisible to users)
 
@@ -427,7 +473,7 @@ Default value: `true`.
 
 ### plan_mode
 
-* **Description**: The metadata retrieval strategy of Iceberg Catalog. For more information, see [Iceberg Catalog metadata retrieval strategy](../data_source/catalog/iceberg_catalog.md#appendix-periodic-metadata-refresh-strategy). Valid values:
+* **Description**: The metadata retrieval strategy of Iceberg Catalog. For more information, see [Iceberg Catalog metadata retrieval strategy](../data_source/catalog/iceberg/iceberg_catalog.md#appendix-periodic-metadata-refresh-strategy). Valid values:
   * `auto`: The system will automatically select the retrieval plan.
   * `local`: Use the local cache plan.
   * `distributed`: Use the distributed plan.
@@ -443,7 +489,20 @@ Default value: `true`.
 
 ### enable_insert_strict
 
-Used to enable the strict mode when loading data using the INSERT statement. The default value is `true`, indicating the strict mode is enabled by default. For more information, see [Strict mode](../loading/load_concept/strict_mode.md).
+* **Description**: Whether to enable strict mode while loading data using INSERT from files(). Valid values: `true` and `false` (Default). When strict mode is enabled, the system loads only qualified rows. It filters out unqualified rows and returns details about the unqualified rows. For more information, see [Strict mode](../loading/load_concept/strict_mode.md). In versions earlier than v3.4.0, when `enable_insert_strict` is set to `true`, the INSERT jobs fails when there is an unqualified rows.
+* **Default**: true
+
+### insert_max_filter_ratio
+
+* **Description**: The maximum error tolerance of INSERT from files(). It's the maximum ratio of data records that can be filtered out due to inadequate data quality. When the ratio of unqualified data records reaches this threshold, the job fails. Range: [0, 1].
+* **Default**: 0
+* **Introduced in**: v3.4.0
+
+### insert_timeout
+
+* **Description**: The timeout duration of the INSERT job. Unit: Seconds. From v3.4.0 onwards, `insert_timeout` applies to operations involved INSERT (for example, UPDATE, DELETE, CTAS, materialized view refresh, statistics collection, and PIPE), replacing `query_timeout`.
+* **Default**: 14400
+* **Introduced in**: v3.4.0
 
 ### enable_materialized_view_for_insert
 
@@ -613,6 +672,13 @@ If a Join (other than Broadcast Join and Replicated Join) has multiple equi-join
 * **Default**: false
 * **Introduced in**: v3.2
 
+### enable_query_trigger_analyze
+
+* **Default**: true
+* **Type**: Boolean
+* **Description**: Whether to enable query-trigger ANALYZE tasks.
+* **Introduced in**: v3.4.0
+
 ### event_scheduler
 
 Used for MySQL client compatibility. No practical usage.
@@ -715,6 +781,36 @@ Specifies the maximum number of unqualified data rows that can be logged. Valid 
 ### lower_case_table_names (global)
 
 Used for MySQL client compatibility. No practical usage. Table names in StarRocks are case-sensitive.
+
+### lower_upper_support_utf8
+
+* **Default**: false
+* **Type**: Boolean
+* **Unit**: -
+* **Description**: Whether to support case conversion for UTF-8 characters in `lower` and `upper` functions. Valid values:
+  * `true`: Support case conversion for UTF-8 characters.
+  * `false` (Default): Not to support case conversion for UTF-8 characters.
+* **Introduced in**: v3.5.0
+
+### low_cardinality_optimize_on_lake
+
+* **Default**: true
+* **Type**: Boolean
+* **Unit**: -
+* **Description**: Whether to enable low cardinality optimization on data lake queries. Valid values:
+  * `true` (Default): Enable low cardinality optimization on data lake queries.
+  * `false`: Disable low cardinality optimization on data lake queries.
+* **Introduced in**: v3.5.0
+
+<!--
+### always_collect_low_card_dict_on_lake
+
+* **Default**: false
+* **Type**: Boolean
+* **Unit**: -
+* **Description**: Whether to collect low cardinality information via statistics.
+* **Introduced in**: v3.5.0
+-->
 
 ### materialized_view_rewrite_mode (v3.2 and later)
 
@@ -859,30 +955,30 @@ Used for compatibility with JDBC connection pool C3P0. No practical use.
 
 ### query_mem_limit
 
-* **Description**: Used to set the memory limit of a query on each BE node. The default value is 0, which means no limit for it. This item takes effect only after Pipeline Engine is enabled. When the `Memory Exceed Limit` error happens, you could try to increase this variable.
-* **Default**: 0, which means no limit.
+* **Description**: Used to set the memory limit of a query on each BE node. The default value is 0, which means no limit for it. This item takes effect only after Pipeline Engine is enabled. When the `Memory Exceed Limit` error happens, you could try to increase this variable. Setting it to `0` indicates no limit is imposed.
+* **Default**: 0
 * **Unit**: Byte
 
 ### query_queue_concurrency_limit (global)
 
-* **Description**: The upper limit of concurrent queries on a BE. It takes effect only after being set greater than `0`.
+* **Description**: The upper limit of concurrent queries on a BE. It takes effect only after being set greater than `0`. Setting it to `0` indicates no limit is imposed.
 * **Default**: 0
 * **Data type**: Int
 
 ### query_queue_cpu_used_permille_limit (global)
 
-* **Description**: The upper limit of CPU usage permille (CPU usage * 1000) on a BE. It takes effect only after being set greater than `0`.
+* **Description**: The upper limit of CPU usage permille (CPU usage * 1000) on a BE. It takes effect only after being set greater than `0`. Setting it to `0` indicates no limit is imposed.
 * **Value range**: [0, 1000]
 * **Default**: `0`
 
 ### query_queue_max_queued_queries (global)
 
-* **Description**: The upper limit of queries in a queue. When this threshold is reached, incoming queries are rejected. It takes effect only after being set greater than `0`.
+* **Description**: The upper limit of queries in a queue. When this threshold is reached, incoming queries are rejected. It takes effect only after being set greater than `0`. Setting it to `0` indicates no limit is imposed.
 * **Default**: `1024`.
 
 ### query_queue_mem_used_pct_limit (global)
 
-* **Description**: The upper limit of memory usage percentage on a BE. It takes effect only after being set greater than `0`.
+* **Description**: The upper limit of memory usage percentage on a BE. It takes effect only after being set greater than `0`. Setting it to `0` indicates no limit is imposed.
 * **Value range**: [0, 1]
 * **Default**: 0
 
@@ -894,7 +990,7 @@ Used for compatibility with JDBC connection pool C3P0. No practical use.
 
 ### query_timeout
 
-* **Description**: Used to set the query timeout in "seconds". This variable will act on all query statements in the current connection, as well as INSERT statements. The default value is 300 seconds.
+* **Description**: Used to set the query timeout in "seconds". This variable will act on all query statements in the current connection. The default value is 300 seconds. From v3.4.0 onwards, `query_timeout` does not apply to INSERT statements.
 * **Value range**: [1, 259200]
 * **Default**: 300
 * **Data type**: Int
@@ -931,6 +1027,12 @@ Used to decide whether to rewrite count distinct queries to bitmap_union_count a
 * **Unit**: Second
 * **Data type**: Int
 * **Introduced in**: v3.1.0
+
+### scan_olap_partition_num_limit
+
+* **Description**: The number of partitions allowed to be scanned for a single table in the execution plan.
+* **Default**: 0 (No limit)
+* **Introduced in**: v3.3.9
 
 ### spill_mode (3.0 and later)
 

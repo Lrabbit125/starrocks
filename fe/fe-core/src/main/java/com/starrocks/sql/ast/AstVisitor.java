@@ -58,6 +58,15 @@ import com.starrocks.sql.ast.feedback.AddPlanAdvisorStmt;
 import com.starrocks.sql.ast.feedback.ClearPlanAdvisorStmt;
 import com.starrocks.sql.ast.feedback.DelPlanAdvisorStmt;
 import com.starrocks.sql.ast.feedback.ShowPlanAdvisorStmt;
+import com.starrocks.sql.ast.group.CreateGroupProviderStmt;
+import com.starrocks.sql.ast.group.DropGroupProviderStmt;
+import com.starrocks.sql.ast.group.ShowCreateGroupProviderStmt;
+import com.starrocks.sql.ast.group.ShowGroupProvidersStmt;
+import com.starrocks.sql.ast.integration.AlterSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.CreateSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.DropSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.ShowCreateSecurityIntegrationStatement;
+import com.starrocks.sql.ast.integration.ShowSecurityIntegrationStatement;
 import com.starrocks.sql.ast.pipe.AlterPipeClause;
 import com.starrocks.sql.ast.pipe.AlterPipeStmt;
 import com.starrocks.sql.ast.pipe.CreatePipeStmt;
@@ -65,6 +74,15 @@ import com.starrocks.sql.ast.pipe.DescPipeStmt;
 import com.starrocks.sql.ast.pipe.DropPipeStmt;
 import com.starrocks.sql.ast.pipe.PipeName;
 import com.starrocks.sql.ast.pipe.ShowPipeStmt;
+import com.starrocks.sql.ast.spm.ControlBaselinePlanStmt;
+import com.starrocks.sql.ast.spm.CreateBaselinePlanStmt;
+import com.starrocks.sql.ast.spm.DropBaselinePlanStmt;
+import com.starrocks.sql.ast.spm.ShowBaselinePlanStmt;
+import com.starrocks.sql.ast.translate.TranslateStmt;
+import com.starrocks.sql.ast.txn.BeginStmt;
+import com.starrocks.sql.ast.txn.CommitStmt;
+import com.starrocks.sql.ast.txn.RollbackStmt;
+import com.starrocks.sql.ast.warehouse.AlterWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.CreateWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.DropWarehouseStmt;
 import com.starrocks.sql.ast.warehouse.ResumeWarehouseStmt;
@@ -73,6 +91,10 @@ import com.starrocks.sql.ast.warehouse.ShowClustersStmt;
 import com.starrocks.sql.ast.warehouse.ShowNodesStmt;
 import com.starrocks.sql.ast.warehouse.ShowWarehousesStmt;
 import com.starrocks.sql.ast.warehouse.SuspendWarehouseStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.AlterCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.CreateCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.DropCnGroupStmt;
+import com.starrocks.sql.ast.warehouse.cngroup.EnableDisableCnGroupStmt;
 
 public interface AstVisitor<R, C> {
     default R visit(ParseNode node) {
@@ -148,6 +170,10 @@ public interface AstVisitor<R, C> {
     }
 
     default R visitShowDataStatement(ShowDataStmt statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    default R visitShowDataDistributionStatement(ShowDataDistributionStmt statement, C context) {
         return visitShowStatement(statement, context);
     }
 
@@ -421,6 +447,14 @@ public interface AstVisitor<R, C> {
         return visitDDLStatement(statement, context);
     }
 
+    default R visitAdminSetAutomatedSnapshotOnStatement(AdminSetAutomatedSnapshotOnStmt clause, C context) {
+        return visitDDLStatement(clause, context);
+    }
+
+    default R visitAdminSetAutomatedSnapshotOffStatement(AdminSetAutomatedSnapshotOffStmt clause, C context) {
+        return visitDDLStatement(clause, context);
+    }
+
     // ---------------------------------------- Cluster Management Statement -------------------------------------------
 
     default R visitAlterSystemStatement(AlterSystemStmt statement, C context) {
@@ -466,6 +500,10 @@ public interface AstVisitor<R, C> {
     }
 
     default R visitShowHistogramStatsMetaStatement(ShowHistogramStatsMetaStmt statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    default R visitShowMultiColumnsStatsMetaStatement(ShowMultiColumnStatsMetaStmt statement, C context) {
         return visitShowStatement(statement, context);
     }
 
@@ -755,6 +793,46 @@ public interface AstVisitor<R, C> {
         return visitShowStatement(statement, context);
     }
 
+    // ------------------------------------------- Security Integration Statement ----------------------------------------------------
+
+    default R visitCreateSecurityIntegrationStatement(CreateSecurityIntegrationStatement statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitDropSecurityIntegrationStatement(DropSecurityIntegrationStatement statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitAlterSecurityIntegrationStatement(AlterSecurityIntegrationStatement statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitShowCreateSecurityIntegrationStatement(ShowCreateSecurityIntegrationStatement statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    default R visitShowSecurityIntegrationStatement(ShowSecurityIntegrationStatement statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    // ------------------------------------------- Group Provider Statement ----------------------------------------------------
+
+    default R visitCreateGroupProviderStatement(CreateGroupProviderStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitDropGroupProviderStatement(DropGroupProviderStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitShowCreateGroupProviderStatement(ShowCreateGroupProviderStmt statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    default R visitShowGroupProvidersStatement(ShowGroupProvidersStmt statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
     // ---------------------------------------- Backup Restore Statement -----------------------------------------------
 
     default R visitBackupStatement(BackupStmt statement, C context) {
@@ -1024,6 +1102,27 @@ public interface AstVisitor<R, C> {
         return visitShowStatement(statement, context);
     }
 
+    default R visitAlterWarehouseStatement(AlterWarehouseStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    // ------------------------------------------- CNGroup statement ---------------------------------------------------
+    default R visitCreateCNGroupStatement(CreateCnGroupStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitDropCNGroupStatement(DropCnGroupStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitEnableDisableCNGroupStatement(EnableDisableCnGroupStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitAlterCNGroupStatement(AlterCnGroupStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
     // ------------------------------------------- Unsupported statement ---------------------------------------------------------
 
     default R visitUnsupportedStatement(UnsupportedStmt statement, C context) {
@@ -1112,6 +1211,10 @@ public interface AstVisitor<R, C> {
         return visitNode(clause, context);
     }
 
+    default R visitDropPersistentIndexClause(DropPersistentIndexClause clause, C context) {
+        return visitNode(clause, context);
+    }
+
     default R visitTableRenameClause(TableRenameClause clause, C context) {
         return visitNode(clause, context);
     }
@@ -1145,6 +1248,10 @@ public interface AstVisitor<R, C> {
     }
 
     default R visitModifyColumnClause(ModifyColumnClause clause, C context) {
+        return visitNode(clause, context);
+    }
+
+    default R visitModifyColumnCommentClause(ModifyColumnCommentClause clause, C context) {
         return visitNode(clause, context);
     }
 
@@ -1264,7 +1371,7 @@ public interface AstVisitor<R, C> {
         return visitRelation(node, context);
     }
 
-    default R visitSubquery(SubqueryRelation node, C context) {
+    default R visitSubqueryRelation(SubqueryRelation node, C context) {
         return visitRelation(node, context);
     }
 
@@ -1430,7 +1537,7 @@ public interface AstVisitor<R, C> {
         return visitExpression(node, context);
     }
 
-    default R visitSubquery(Subquery node, C context) {
+    default R visitSubqueryExpr(Subquery node, C context) {
         return visitExpression(node, context);
     }
 
@@ -1483,6 +1590,25 @@ public interface AstVisitor<R, C> {
         return visitStatement(statement, context);
     }
 
+    // ---------------------------------------- Transaction Statement --------------------------------------------------
+
+    default R visitBeginStatement(BeginStmt statement, C context) {
+        return visitStatement(statement, context);
+    }
+
+    default R visitCommitStatement(CommitStmt statement, C context) {
+        return visitStatement(statement, context);
+    }
+
+    default R visitRollbackStatement(RollbackStmt statement, C context) {
+        return visitStatement(statement, context);
+    }
+
+    // ---------------------------------------- Translate Statement --------------------------------------------------
+    default R visitTranslateStatement(TranslateStmt statement, C context) {
+        return visitStatement(statement, context);
+    }
+
     // ------------------------------------------- AST -----------------------------------------------------------------
 
     default R visitLimitElement(LimitElement node, C context) {
@@ -1513,4 +1639,21 @@ public interface AstVisitor<R, C> {
         return visitNode(node, context);
     }
 
+    // -------------------------------------------BaselinePlan -------------------------------------------------------
+
+    default R visitCreateBaselinePlanStatement(CreateBaselinePlanStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitDropBaselinePlanStatement(DropBaselinePlanStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
+
+    default R visitShowBaselinePlanStatement(ShowBaselinePlanStmt statement, C context) {
+        return visitShowStatement(statement, context);
+    }
+
+    default R visitControlBaselinePlanStatement(ControlBaselinePlanStmt statement, C context) {
+        return visitDDLStatement(statement, context);
+    }
 }

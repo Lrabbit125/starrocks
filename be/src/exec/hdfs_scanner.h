@@ -17,6 +17,8 @@
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 
+#include "connector/deletion_vector/deletion_bitmap.h"
+#include "exec/olap_scan_prepare.h"
 #include "exec/pipeline/scan/morsel.h"
 #include "exprs/expr.h"
 #include "exprs/expr_context.h"
@@ -39,6 +41,32 @@ struct HdfsSplitContext : public pipeline::ScanSplitContext {
 };
 using HdfsSplitContextPtr = std::unique_ptr<HdfsSplitContext>;
 
+struct SkipRowsContext {
+    DeletionBitmapPtr deletion_bitmap;
+
+    bool has_skip_rows() { return deletion_bitmap != nullptr && !deletion_bitmap->empty(); }
+};
+using SkipRowsContextPtr = std::shared_ptr<SkipRowsContext>;
+
+struct OptimizationCounter {
+    int bloom_filter_tried_counter = 0;
+    int bloom_filter_success_counter = 0;
+    int statistics_tried_counter = 0;
+    int statistics_success_counter = 0;
+    int page_index_tried_counter = 0;
+    int page_index_filter_group_counter = 0;
+    int page_index_success_counter = 0;
+    OptimizationCounter& operator+=(const OptimizationCounter& counter) {
+        bloom_filter_tried_counter += counter.bloom_filter_tried_counter;
+        bloom_filter_success_counter += counter.bloom_filter_success_counter;
+        statistics_tried_counter += counter.statistics_tried_counter;
+        statistics_success_counter += counter.statistics_success_counter;
+        page_index_tried_counter += counter.page_index_tried_counter;
+        page_index_filter_group_counter += counter.page_index_filter_group_counter;
+        page_index_success_counter += counter.page_index_success_counter;
+        return *this;
+    }
+};
 struct HdfsScanStats {
     int64_t raw_rows_read = 0;
     int64_t rows_read = 0;
@@ -60,6 +88,11 @@ struct HdfsScanStats {
     int64_t level_decode_ns = 0;
     int64_t value_decode_ns = 0;
     int64_t page_read_ns = 0;
+    int64_t page_read_counter = 0;
+    int64_t page_cache_read_counter = 0;
+    int64_t page_cache_write_counter = 0;
+    int64_t page_cache_read_decompressed_counter = 0;
+    int64_t page_cache_read_compressed_counter = 0;
     // reader init
     int64_t footer_read_ns = 0;
     int64_t footer_cache_read_ns = 0;
@@ -82,6 +115,8 @@ struct HdfsScanStats {
     // page index
     int64_t rows_before_page_index = 0;
     int64_t page_index_ns = 0;
+    int64_t parquet_total_row_groups = 0;
+    int64_t parquet_filtered_row_groups = 0;
 
     // late materialize round-by-round
     int64_t group_min_round_cost = 0;
@@ -97,7 +132,14 @@ struct HdfsScanStats {
     // Iceberg v2 only!
     int64_t iceberg_delete_file_build_ns = 0;
     int64_t iceberg_delete_files_per_scan = 0;
-    int64_t iceberg_delete_file_build_filter_ns = 0;
+
+    // deletion vector
+    int64_t deletion_vector_build_ns = 0;
+    int64_t deletion_vector_build_count = 0;
+    int64_t build_rowid_filter_ns = 0;
+
+    // reader filter info
+    OptimizationCounter _optimzation_counter{};
 };
 
 class HdfsParquetProfile;
@@ -125,6 +167,11 @@ struct HdfsScanProfile {
     RuntimeProfile::Counter* datacache_skip_write_bytes = nullptr;
     RuntimeProfile::Counter* datacache_skip_read_counter = nullptr;
     RuntimeProfile::Counter* datacache_skip_read_bytes = nullptr;
+    RuntimeProfile::Counter* datacache_read_peer_counter = nullptr;
+    RuntimeProfile::Counter* datacache_read_peer_bytes = nullptr;
+    RuntimeProfile::Counter* datacache_read_peer_timer = nullptr;
+    RuntimeProfile::Counter* datacache_skip_read_peer_counter = nullptr;
+    RuntimeProfile::Counter* datacache_skip_read_peer_bytes = nullptr;
     RuntimeProfile::Counter* datacache_write_counter = nullptr;
     RuntimeProfile::Counter* datacache_write_bytes = nullptr;
     RuntimeProfile::Counter* datacache_write_timer = nullptr;
@@ -159,6 +206,7 @@ struct HdfsScannerParams {
     // runtime bloom filter.
     const RuntimeFilterProbeCollector* runtime_filter_collector = nullptr;
 
+    std::vector<ExprContext*> all_conjunct_ctxs;
     // all conjuncts except `conjunct_ctxs_by_slot`, like compound predicates
     std::vector<ExprContext*> scanner_conjunct_ctxs;
     std::unordered_set<SlotId> slots_in_conjunct;
@@ -174,6 +222,8 @@ struct HdfsScannerParams {
     std::string path;
     // The file size. -1 means unknown.
     int64_t file_size = -1;
+    // the table location
+    std::string table_location;
 
     const TupleDescriptor* tuple_desc = nullptr;
 
@@ -209,7 +259,9 @@ struct HdfsScannerParams {
 
     std::vector<const TIcebergDeleteFile*> deletes;
 
-    const TIcebergSchema* iceberg_schema = nullptr;
+    std::shared_ptr<TDeletionVectorDescriptor> deletion_vector_descriptor = nullptr;
+
+    const TIcebergSchema* lake_schema = nullptr;
 
     bool is_lazy_materialization_slot(SlotId slot_id) const;
 
@@ -217,13 +269,18 @@ struct HdfsScannerParams {
 
     DataCacheOptions datacache_options{};
     bool use_file_metacache = false;
+    bool use_file_pagecache = false;
 
     std::atomic<int32_t>* lazy_column_coalesce_counter;
     bool can_use_any_column = false;
     bool can_use_min_max_count_opt = false;
     bool orc_use_column_names = false;
+    bool parquet_page_index_enable = false;
+    bool parquet_bloom_filter_enable = false;
 
     int64_t connector_max_split_size = 0;
+
+    ColumnIdToGlobalDictMap* global_dictmaps = &EMPTY_GLOBAL_DICTMAPS;
 };
 
 struct HdfsScannerContext {
@@ -256,12 +313,12 @@ struct HdfsScannerContext {
     std::vector<ColumnInfo> partition_columns;
 
     // partition column value which read from hdfs file path
-    std::vector<ColumnPtr> partition_values;
+    Columns partition_values;
 
     // extended column
     std::vector<ColumnInfo> extended_columns;
 
-    std::vector<ColumnPtr> extended_values;
+    Columns extended_values;
 
     // scan range
     const THdfsScanRange* scan_range = nullptr;
@@ -293,16 +350,23 @@ struct HdfsScannerContext {
     bool return_count_column = false;
 
     bool use_file_metacache = false;
+    bool use_file_pagecache = false;
+
+    bool parquet_page_index_enable = false;
+
+    bool parquet_bloom_filter_enable = false;
 
     std::string timezone;
 
-    const TIcebergSchema* iceberg_schema = nullptr;
+    const TIcebergSchema* lake_schema = nullptr;
 
     HdfsScanStats* stats = nullptr;
 
     std::atomic<int32_t>* lazy_column_coalesce_counter;
 
     int64_t connector_max_split_size = 0;
+
+    RuntimeScanRangePruner* rf_scan_range_pruner = nullptr;
 
     // update none_existed_slot
     // update conjunct
@@ -326,7 +390,7 @@ struct HdfsScannerContext {
 
     void append_or_update_extended_column_to_chunk(ChunkPtr* chunk, size_t row_count);
     void append_or_update_column_to_chunk(ChunkPtr* chunk, size_t row_count, const std::vector<ColumnInfo>& columns,
-                                          const std::vector<ColumnPtr>& values);
+                                          const Columns& values);
 
     // if we can skip this file by evaluating conjuncts of non-existed columns with default value.
     StatusOr<bool> should_skip_by_evaluating_not_existed_slots();
@@ -338,6 +402,13 @@ struct HdfsScannerContext {
     Status evaluate_on_conjunct_ctxs_by_slot(ChunkPtr* chunk, Filter* filter);
 
     void merge_split_tasks();
+
+    // used for parquet zone map filter only
+    std::unique_ptr<ScanConjunctsManager> conjuncts_manager = nullptr;
+    std::vector<std::unique_ptr<ColumnPredicate>> predicate_free_pool;
+    PredicateTree predicate_tree;
+
+    ColumnIdToGlobalDictMap* global_dictmaps = &EMPTY_GLOBAL_DICTMAPS;
 };
 
 struct OpenFileOptions {
@@ -392,6 +463,8 @@ protected:
     static CompressionTypePB get_compression_type_from_path(const std::string& filename);
 
     void do_update_iceberg_v2_counter(RuntimeProfile* parquet_profile, const std::string& parent_name);
+    void do_update_deletion_vector_build_counter(RuntimeProfile* parent_profile);
+    void do_update_deletion_vector_filter_counter(RuntimeProfile* parent_profile);
 
 private:
     bool _opened = false;

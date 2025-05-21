@@ -11,7 +11,7 @@ import UserPrivilegeCase from '../../../_assets/commonMarkdown/userPrivilegeCase
 
 该语句用于将一个或多个权限授予给角色或用户，以及将角色授予给用户或其他角色。
 
-有关权限项的详细信息，参见[权限项](../../../administration/user_privs/privilege_item.md)。
+有关权限项的详细信息，参见[权限项](../../../administration/user_privs/authorization/privilege_item.md)。
 
 授权后，您可以通过 [SHOW GRANTS](SHOW_GRANTS.md) 来查看权限授予的信息；通过 [REVOKE](REVOKE.md) 来撤销权限或角色。
 
@@ -61,7 +61,7 @@ GRANT
 ```SQL
 GRANT
     { USAGE | DROP | ALL [PRIVILEGES]} 
-    ON { GLOBAL FUNCTION <function_name>(input_data_type) [, < function_name>(input_data_type),...]    
+    ON { GLOBAL FUNCTION <function_name>(input_data_type) [, <function_name>(input_data_type),...]    
        | ALL GLOBAL FUNCTIONS }
     TO { ROLE | USER} {<role_name>|<user_identity>} [ WITH GRANT OPTION ]
 ```
@@ -167,7 +167,7 @@ GRANT <priv> ON MATERIALIZED VIEW <db_name>.<mv_name> TO {ROLE <role_name> | USE
 ```SQL
 GRANT
     { USAGE | DROP | ALL [PRIVILEGES]} 
-    ON { FUNCTION <function_name>(input_data_type) [, < function_name >(input_data_type),...]
+    ON { FUNCTION <function_name>(input_data_type) [, <function_name>(input_data_type),...]
        ｜ ALL FUNCTIONS IN 
            { { DATABASE <database_name> }| ALL DATABASES }}
     TO { ROLE | USER } {<role_name>|<user_identity>} [ WITH GRANT OPTION ]
@@ -176,7 +176,7 @@ GRANT
 *注意：需要执行 SET CATALOG 之后才能使用。function 还可以用 `<db_name>.<function_name>` 的方式来进行表示。
 
 ```SQL
-GRANT <priv> ON FUNCTION <db_name>.<function_name> TO {ROLE <role_name> | USER <user_name>}
+GRANT <priv> ON FUNCTION <db_name>.<function_name>(input_data_type) TO {ROLE <role_name> | USER <user_name>}
 ```
 
 #### User 相关
@@ -267,4 +267,4 @@ GRANT IMPERSONATE ON USER 'rose'@'%' TO USER 'jack'@'%';
 
 <UserPrivilegeCase />
 
-有关多业务线权限管理的相关实践，参见 [多业务线权限管理](../../../administration/user_privs/User_privilege.md#多业务线权限管理)。
+有关多业务线权限管理的相关实践，参见 [多业务线权限管理](../../../administration/user_privs/authorization/User_privilege.md#多业务线权限管理)。

@@ -22,34 +22,31 @@ import com.starrocks.catalog.ListPartitionInfo;
 import com.starrocks.catalog.MaterializedView;
 import com.starrocks.catalog.Partition;
 import com.starrocks.catalog.PartitionInfo;
-import com.starrocks.qe.StmtExecutor;
 import com.starrocks.scheduler.persist.MVTaskRunExtraMessage;
 import com.starrocks.server.GlobalStateMgr;
-import com.starrocks.sql.ast.StatementBase;
+import com.starrocks.sql.ast.RefreshMaterializedViewStatement;
 import com.starrocks.sql.common.PListCell;
-import com.starrocks.sql.parser.SqlParser;
+import com.starrocks.sql.optimizer.rule.transformation.materialization.MVTestBase;
 import com.starrocks.sql.plan.ExecPlan;
 import com.starrocks.sql.plan.PlanTestBase;
 import com.starrocks.thrift.TExplainLevel;
-import org.junit.After;
-import org.junit.AfterClass;
+import com.starrocks.utframe.UtFrameUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.FixMethodOrder;
 import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
-import static com.starrocks.sql.plan.PlanTestBase.cleanupEphemeralMVs;
-
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
+public class PCTRefreshListPartitionOlapTest extends MVTestBase {
     private static String T1;
     private static String T2;
     private static String T3;
@@ -57,10 +54,12 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
     private static String T5;
     private static String T6;
     private static String S2;
+    private static String TT1;
+    private static String TT2;
 
     @BeforeClass
     public static void beforeClass() throws Exception {
-        MVRefreshTestBase.beforeClass();
+        MVTestBase.beforeClass();
         // table whose partitions have multiple values
         T1 = "CREATE TABLE t1 (\n" +
                     "      id BIGINT,\n" +
@@ -146,21 +145,29 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                     "DUPLICATE KEY(id)\n" +
                     "PARTITION BY (province, dt) \n" +
                     "DISTRIBUTED BY RANDOM\n";
-    }
-
-    @AfterClass
-    public static void afterClass() throws Exception {
-        cleanupEphemeralMVs(starRocksAssert, startSuiteTime);
-    }
-
-    @Before
-    public void before() {
-        startCaseTime = Instant.now().getEpochSecond();
-    }
-
-    @After
-    public void after() throws Exception {
-        cleanupEphemeralMVs(starRocksAssert, startCaseTime);
+        // table with partition expression whose partitions have multi columns
+        TT1 = "CREATE TABLE tt1 (\n" +
+                " id BIGINT,\n" +
+                " age SMALLINT,\n" +
+                " dt date not null,\n" +
+                " province VARCHAR(64) not null\n" +
+                ")\n" +
+                "PARTITION BY (province, dt) \n" +
+                "DISTRIBUTED BY RANDOM\n";
+        // table whose partitions have multi columns
+        TT2 = "CREATE TABLE tt2 (\n" +
+                " id BIGINT,\n" +
+                " age SMALLINT,\n" +
+                " dt date not null,\n" +
+                " province VARCHAR(64) not null\n" +
+                ")\n" +
+                "PARTITION BY LIST (province, dt) (\n" +
+                "     PARTITION p1 VALUES IN ((\"beijing\", \"2024-01-01\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"guangdong\", \"2024-01-01\")), \n" +
+                "     PARTITION p3 VALUES IN ((\"beijing\", \"2024-01-02\")),\n" +
+                "     PARTITION p4 VALUES IN ((\"guangdong\", \"2024-01-02\")) \n" +
+                ")\n" +
+                "DISTRIBUTED BY RANDOM\n";
     }
 
     private ExecPlan getExecPlan(TaskRun taskRun) {
@@ -197,31 +204,6 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
         ExecPlan execPlan = getExecPlan(taskRun);
         Assert.assertTrue(execPlan != null);
         return execPlan;
-    }
-
-    private void addListPartition(String tbl, String pName, String pVal) {
-        String addPartitionSql = String.format("ALTER TABLE %s ADD PARTITION %s VALUES IN ('%s')", tbl, pName, pVal);
-        StatementBase stmt = SqlParser.parseSingleStatement(addPartitionSql, connectContext.getSessionVariable().getSqlMode());
-        try {
-            new StmtExecutor(connectContext, stmt).execute();
-        } catch (Exception e) {
-            Assert.fail("add partition failed:" + e);
-        }
-    }
-
-    private String toPartitionVal(String val) {
-        return val == null ? "NULL" : String.format("'%s'", val);
-    }
-
-    private void addListPartition(String tbl, String pName, String pVal1, String pVal2) {
-        String addPartitionSql = String.format("ALTER TABLE %s ADD PARTITION %s VALUES IN ((%s, %s))", tbl, pName,
-                    toPartitionVal(pVal1), toPartitionVal(pVal2));
-        StatementBase stmt = SqlParser.parseSingleStatement(addPartitionSql, connectContext.getSessionVariable().getSqlMode());
-        try {
-            new StmtExecutor(connectContext, stmt).execute();
-        } catch (Exception e) {
-            Assert.fail("add partition failed:" + e);
-        }
     }
 
     @Test
@@ -711,15 +693,14 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                                 String insertSql = "insert into t2 partition(p1) values(1, 1, '2021-12-01', 'beijing');";
                                 ExecPlan execPlan = getExecPlanAfterInsert(taskRun, insertSql);
                                 String plan = execPlan.getExplainString(TExplainLevel.NORMAL);
-                                PlanTestBase.assertContains(plan, "  1:OlapScanNode\n" +
-                                            "     TABLE: t2\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=1/2\n" +
-                                            "     rollup: t2");
+                                PlanTestBase.assertContains(plan, "     TABLE: t2\n" +
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 4: province = 'beijing'\n" +
+                                        "     partitions=1/2");
                                 PlanTestBase.assertContains(plan, "     TABLE: t4\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=0/0\n" +
-                                            "     rollup: t4");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 9: province = 'beijing'\n" +
+                                        "     partitions=0/0");
 
                                 Collection<Partition> partitions = materializedView.getPartitions();
                                 Assert.assertEquals(2, partitions.size());
@@ -785,10 +766,10 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                                 String insertSql = "insert into t1 partition(p1) values(1, 1, '2021-12-01', 'beijing');";
                                 ExecPlan execPlan = getExecPlanAfterInsert(taskRun, insertSql);
                                 String plan = execPlan.getExplainString(TExplainLevel.NORMAL);
-                                PlanTestBase.assertContains(plan, "     TABLE: t1\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=1/2\n" +
-                                            "     rollup: t1");
+                                PlanTestBase.assertContains(plan, "    TABLE: t1\n" +
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 4: province IN ('chongqing', 'beijing')\n" +
+                                        "     partitions=1/2");
 
                                 Collection<Partition> partitions = materializedView.getPartitions();
                                 Assert.assertEquals(2, partitions.size());
@@ -805,12 +786,13 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                                 ExecPlan execPlan = getExecPlanAfterInsert(taskRun, insertSql);
                                 String plan = execPlan.getExplainString(TExplainLevel.NORMAL);
                                 PlanTestBase.assertContains(plan, "     TABLE: t1\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=1/3");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 4: province = 'hangzhou'\n" +
+                                        "     partitions=1/3");
                                 PlanTestBase.assertContains(plan, "     TABLE: t5\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=0/0\n" +
-                                            "     rollup: t5");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 9: province = 'hangzhou'\n" +
+                                        "     partitions=0/0");
                                 Collection<Partition> partitions = materializedView.getPartitions();
                                 Assert.assertEquals(3, partitions.size());
                             }
@@ -871,9 +853,9 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                                 ExecPlan execPlan = getExecPlanAfterInsert(taskRun, insertSql);
                                 String plan = execPlan.getExplainString(TExplainLevel.NORMAL);
                                 PlanTestBase.assertContains(plan, "     TABLE: t1\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=1/2\n" +
-                                            "     rollup: t1");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 4: province IN ('chongqing', 'beijing')\n" +
+                                        "     partitions=1/2");
 
                                 Collection<Partition> partitions = materializedView.getPartitions();
                                 Assert.assertEquals(2, partitions.size());
@@ -890,12 +872,14 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
                                 ExecPlan execPlan = getExecPlanAfterInsert(taskRun, insertSql);
                                 String plan = execPlan.getExplainString(TExplainLevel.NORMAL);
                                 PlanTestBase.assertContains(plan, "     TABLE: t1\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=1/3");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 4: province = 'hangzhou'\n" +
+                                        "     partitions=1/3");
                                 PlanTestBase.assertContains(plan, "     TABLE: t5\n" +
-                                            "     PREAGGREGATION: ON\n" +
-                                            "     partitions=0/0\n" +
-                                            "     rollup: t5");
+                                        "     PREAGGREGATION: ON\n" +
+                                        "     PREDICATES: 8: province = 'hangzhou'\n" +
+                                        "     partitions=0/0\n" +
+                                        "     rollup: t5");
                                 Collection<Partition> partitions = materializedView.getPartitions();
                                 Assert.assertEquals(3, partitions.size());
                             }
@@ -1045,31 +1029,22 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
 
     @Test
     public void testPartialRefreshSingleColumnMVWithSingleValues2() {
-        Database testDb = GlobalStateMgr.getCurrentState().getLocalMetastore().getDb("test");
         starRocksAssert.withTable(S2, () -> {
-            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
-                            "partition by dt \n" +
-                            "distributed by random \n" +
-                            "REFRESH DEFERRED MANUAL \n" +
-                            "properties (" +
-                            "   'partition_refresh_number' = '1'," +
-                            "   'partition_ttl_number' = '1'" +
-                            ")" +
-                            "as select dt, province, sum(age) from s2 group by dt, province;",
-                    (obj) -> {
-                        String mvName = (String) obj;
-                        MaterializedView materializedView = ((MaterializedView) GlobalStateMgr.getCurrentState()
-                                .getLocalMetastore().getTable(testDb.getFullName(), mvName));
-                        Task task = TaskBuilder.buildMvTask(materializedView, testDb.getFullName());
-                        TaskRun taskRun = TaskRunBuilder.newBuilder(task).build();
-                        ExecPlan execPlan = getExecPlan(taskRun);
-                        Assert.assertEquals(null, execPlan);
-                        List<String> partitions =
-                                materializedView.getPartitions().stream().map(Partition::getName).sorted()
-                                        .collect(Collectors.toList());
-                        // If mv has partition_ttl_number, ensure only create ttl number partitions.
-                        Assert.assertEquals("[p3]", partitions.toString());
-                    });
+            try {
+                starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                        "partition by dt \n" +
+                        "distributed by random \n" +
+                        "REFRESH DEFERRED MANUAL \n" +
+                        "properties (" +
+                        "   'partition_refresh_number' = '1'," +
+                        "   'partition_ttl_number' = '1'" +
+                        ")" +
+                        "as select dt, province, sum(age) from s2 group by dt, province;");
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("Invalid parameter partition_ttl_number does not support " +
+                        "non-range-partitioned materialized view"));
+            }
         });
     }
 
@@ -1295,5 +1270,285 @@ public class PCTRefreshListPartitionOlapTest extends MVRefreshTestBase {
         } catch (Exception e) {
             Assert.fail(e.getMessage());
         }
+    }
+
+    @Test
+    public void testCreateMVWithMultiPartitionColumns() {
+        starRocksAssert.withTable(T3, () -> {
+            starRocksAssert.withMaterializedView("create materialized view mv1\n" +
+                    "partition by (province, dt) \n" +
+                    "REFRESH DEFERRED MANUAL \n" +
+                    "properties ('partition_refresh_number' = '-1')" +
+                    "as select dt, province, sum(age) from t3 group by dt, province;");
+            MaterializedView mv = starRocksAssert.getMv("test", "mv1");
+            refreshMV("test", mv);
+            starRocksAssert.dropMaterializedView("mv1");
+        });
+    }
+
+    @Test
+    public void testRefreshListPartitionMVWithMultiPartitionColumns() {
+        starRocksAssert.withTable(T3, () -> {
+            starRocksAssert.withMaterializedView("create materialized view test_mv1\n" +
+                            "partition by (dt, province) \n" +
+                            "distributed by random \n" +
+                            "REFRESH DEFERRED MANUAL \n" +
+                            "properties ('partition_refresh_number' = '1')" +
+                            "as select dt, province, sum(age) from t3 group by dt, province;",
+                    (obj) -> {
+                        {
+                            String sql = "REFRESH MATERIALIZED VIEW test_mv1 PARTITION (('20240101', 'beijing'), ('20240101', " +
+                                    "'nanjing')) FORCE;";
+                            RefreshMaterializedViewStatement statement =
+                                    (RefreshMaterializedViewStatement) UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
+                            Assert.assertTrue(statement.isForceRefresh());
+                            Assert.assertNull(statement.getPartitionRangeDesc());
+                            Set<PListCell> expect = ImmutableSet.of(
+                                    new PListCell(ImmutableList.of(ImmutableList.of("20240101", "beijing"))),
+                                    new PListCell(ImmutableList.of(ImmutableList.of("20240101", "nanjing")))
+                            );
+                            Assert.assertEquals(expect, statement.getPartitionListDesc());
+                        }
+                    });
+        });
+    }
+
+    private void withTablePartitions(String tableName) {
+        if (tableName.equalsIgnoreCase("t6")) {
+            addListPartition(tableName, "p1", "2024-01-01", "2024-01-01");
+            addListPartition(tableName, "p2", "2024-01-02", "2024-01-01");
+            addListPartition(tableName, "p3", "2024-01-01", "2024-01-02");
+            addListPartition(tableName, "p4", "2024-01-02", "2024-01-02");
+        } else {
+            addListPartition(tableName, "p1", "beijing", "2024-01-01");
+            addListPartition(tableName, "p2", "guangdong", "2024-01-01");
+            addListPartition(tableName, "p3", "beijing", "2024-01-02");
+            addListPartition(tableName, "p4", "guangdong", "2024-01-02");
+        }
+    }
+    private void testMVRefreshWithTTLCondition(String tableName) {
+        withTablePartitions(tableName);
+        String mvCreateDdl = String.format("create materialized view test_mv1\n" +
+                "partition by (dt) \n" +
+                "distributed by random \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "PROPERTIES ('partition_retention_condition' = 'dt >= current_date() - interval 1 month')\n " +
+                "as select * from %s;", tableName);
+        starRocksAssert.withMaterializedView(mvCreateDdl,
+                () -> {
+                    String mvName = "test_mv1";
+                    MaterializedView mv = starRocksAssert.getMv("test", mvName);
+                    String query = String.format("select * from %s ", tableName);
+                    {
+                        // all partitions are expired, no need to create partitions for mv
+                        PartitionBasedMvRefreshProcessor processor = refreshMV("test", mv);
+                        Assert.assertEquals(0, mv.getVisiblePartitions().size());
+                        Assert.assertTrue(processor.getNextTaskRun() == null);
+                        ExecPlan execPlan = processor.getMvContext().getExecPlan();
+                        Assert.assertTrue(execPlan == null);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=4/4", tableName));
+                    }
+
+                    {
+                        // add new partitions
+                        LocalDateTime now = LocalDateTime.now();
+                        addListPartition(tableName, "p5", "guangdong",
+                                now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")), true);
+                        addListPartition(tableName, "p6", "guangdong",
+                                now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyy-MM-dd")), true);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=6/6", tableName));
+                    }
+
+                    {
+                        String alterMVSql = String.format("alter materialized view %s set (" +
+                                "'query_rewrite_consistency' = 'loose')", mvName);
+                        starRocksAssert.alterMvProperties(alterMVSql);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=6/6", tableName));
+                    }
+
+                    {
+                        String alterMVSql = String.format("alter materialized view %s set (" +
+                                "'query_rewrite_consistency' = 'force_mv')", mvName);
+                        starRocksAssert.alterMvProperties(alterMVSql);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, ":UNION");
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     PREDICATES: ", tableName));
+                        PlanTestBase.assertContains(plan, "TABLE: test_mv1\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=0/0");
+
+                    }
+
+                    refreshMV("test", mv);
+                    {
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, ":UNION");
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     PREDICATES: ", tableName));
+                        PlanTestBase.assertContains(plan, "TABLE: test_mv1\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=2/2");
+                    }
+                    {
+                        String query2 = String.format("select * from %s where dt >= current_date() - interval 1 month ",
+                                tableName);
+                        String plan = getFragmentPlan(query2);
+                        PlanTestBase.assertNotContains(plan, ":UNION");
+                        PlanTestBase.assertContains(plan, "     TABLE: test_mv1\n");
+                    }
+                });
+    }
+
+    @Test
+    public void testMVRefreshWithTTLConditionTT1() {
+        starRocksAssert.withTable(TT1,
+                (obj) -> {
+                    String tableName = (String) obj;
+                    testMVRefreshWithTTLCondition(tableName);
+                });
+    }
+
+    @Test
+    public void testMVRefreshWithTTLConditionTT2() {
+        starRocksAssert.withTable(TT2,
+                (obj) -> {
+                    String tableName = (String) obj;
+                    testMVRefreshWithTTLCondition(tableName);
+                });
+    }
+
+    private void testMVRefreshWithLooseMode(String tableName) {
+        withTablePartitions(tableName);
+        String mvCreateDdl = String.format("create materialized view test_mv1\n" +
+                "partition by (dt) \n" +
+                "distributed by random \n" +
+                "REFRESH DEFERRED MANUAL \n" +
+                "as select * from %s;", tableName);
+        starRocksAssert.withMaterializedView(mvCreateDdl,
+                () -> {
+                    String mvName = "test_mv1";
+                    MaterializedView mv = starRocksAssert.getMv("test", mvName);
+                    String query = String.format("select * from %s ", tableName);
+                    {
+                        // all partitions are expired, no need to create partitions for mv
+                        PartitionBasedMvRefreshProcessor processor = refreshMV("test", mv);
+                        Assert.assertEquals(2, mv.getVisiblePartitions().size());
+                        Assert.assertTrue(processor.getNextTaskRun() == null);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, "TABLE: test_mv1\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=2/2");
+                    }
+
+                    {
+                        String alterMVSql = String.format("alter materialized view %s set (" +
+                                "'query_rewrite_consistency' = 'loose')", mvName);
+                        starRocksAssert.alterMvProperties(alterMVSql);
+                    }
+
+                    {
+                        // add new partitions
+                        LocalDateTime now = LocalDateTime.now();
+                        addListPartition(tableName, "p5", "guangdong",
+                                now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")), true);
+                        addListPartition(tableName, "p6", "guangdong",
+                                now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyy-MM-dd")), true);
+                        String plan = getFragmentPlan(query);
+                        PlanTestBase.assertContains(plan, ":UNION");
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=2/6", tableName));
+                        PlanTestBase.assertContains(plan, "TABLE: test_mv1\n" +
+                                "     PREAGGREGATION: ON\n" +
+                                "     partitions=2/2");
+                    }
+
+                    {
+                        String query2 = String.format("select * from %s where dt >= current_date() - interval 1 month ",
+                                tableName);
+                        String plan = getFragmentPlan(query2);
+                        PlanTestBase.assertNotContains(plan, ":UNION");
+                        PlanTestBase.assertContains(plan, String.format("TABLE: %s\n", tableName));
+                        PlanTestBase.assertContains(plan, "partitions=2/6");
+                    }
+                });
+    }
+
+    @Test
+    public void testMVRefreshWithLooseModeTT1() {
+        starRocksAssert.withTable(TT1,
+                (obj) -> {
+                    String tableName = (String) obj;
+                    testMVRefreshWithLooseMode(tableName);
+                });
+    }
+
+    @Test
+    public void testMVRefreshWithLooseModeTT2() {
+        starRocksAssert.withTable(TT2,
+                (obj) -> {
+                    String tableName = (String) obj;
+                    testMVRefreshWithLooseMode(tableName);
+                });
+    }
+
+    @Test
+    public void testMVRefreshWithOnePartitionAndOneUnPartitionTable1() throws Exception {
+        String partitionTable = "CREATE TABLE partition_table (dt1 date, int1 int)\n" +
+                "PARTITION BY list(dt1) (\n" +
+                "     PARTITION p1 VALUES IN (\"2025-05-16\") ,\n" +
+                "     PARTITION p2 VALUES IN (\"2025-05-17\") \n" +
+                ")\n";
+        String partitionTableValue = "insert into partition_table partition(p1) values('2025-05-16', 1);";
+        String mvQuery = "CREATE MATERIALIZED VIEW test_mv1 " +
+                "PARTITION BY (dt1) " +
+                "REFRESH DEFERRED MANUAL PROPERTIES (\"partition_refresh_number\"=\"1\")\n" +
+                "AS SELECT dt1,sum(int1) from partition_table group by dt1 union all\n" +
+                "SELECT dt2,sum(int2) from non_partition_table group by dt2;";
+        testMVRefreshWithOnePartitionAndOneUnPartitionTable(partitionTable, partitionTableValue, mvQuery,
+                "     TABLE: partition_table\n" +
+                        "     PREAGGREGATION: ON\n" +
+                        "     PREDICATES: 1: dt1 = '2025-05-17'\n" +
+                        "     partitions=1/2",
+                "     TABLE: non_partition_table\n" +
+                        "     PREAGGREGATION: ON\n" +
+                        "     PREDICATES: 4: dt2 = '2025-05-17'\n" +
+                        "     partitions=1/1");
+    }
+
+    @Test
+    public void testMVRefreshWithOnePartitionAndOneUnPartitionTable2() throws Exception {
+        String partitionTable = "CREATE TABLE partition_table (dt1 date, int1 int, str1 string)\n" +
+                "PARTITION BY list(dt1, str1) (\n" +
+                "     PARTITION p1 VALUES IN ((\"2025-05-16\", \"hangzhou\")),\n" +
+                "     PARTITION p2 VALUES IN ((\"2025-05-17\", \"guangzhou\")) \n" +
+                ")\n";
+        String partitionTableValue = "insert into partition_table partition(p1) values('2025-05-16', 1, 'hangzhou');";
+        String mvQuery = "CREATE MATERIALIZED VIEW test_mv1 " +
+                "PARTITION BY (dt1) " +
+                "REFRESH DEFERRED MANUAL PROPERTIES (\"partition_refresh_number\"=\"1\")\n" +
+                "AS SELECT dt1,sum(int1) from partition_table group by dt1 union all\n" +
+                "SELECT dt2,sum(int2) from non_partition_table group by dt2;";
+        testMVRefreshWithOnePartitionAndOneUnPartitionTable(partitionTable, partitionTableValue, mvQuery,
+                "     TABLE: partition_table\n" +
+                        "     PREAGGREGATION: ON\n" +
+                        "     PREDICATES: 1: dt1 = '2025-05-17'\n" +
+                        "     partitions=1/2",
+                "     TABLE: non_partition_table\n" +
+                        "     PREAGGREGATION: ON\n" +
+                        "     PREDICATES: 5: dt2 = '2025-05-17'\n" +
+                        "     partitions=1/1");
     }
 }

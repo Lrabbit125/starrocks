@@ -123,6 +123,17 @@ Status Analytor::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile* 
     if (_tnode.analytic_node.__isset.sql_aggregate_functions) {
         _runtime_profile->add_info_string("AggregateFunctions", _tnode.analytic_node.sql_aggregate_functions);
     }
+
+    _is_merge_funcs = _tnode.analytic_node.analytic_functions[0].nodes[0].agg_expr.is_merge_agg;
+    if (_is_merge_funcs) {
+        for (size_t i = 1; i < _tnode.analytic_node.analytic_functions.size(); i++) {
+            DCHECK(_tnode.analytic_node.analytic_functions[i].nodes[0].agg_expr.is_merge_agg);
+        }
+    }
+    if (_is_merge_funcs) {
+        _runtime_profile->add_info_string("isMerge", "true");
+    }
+
     _mem_pool = std::make_unique<MemPool>();
 
     const TAnalyticNode& analytic_node = _tnode.analytic_node;
@@ -166,7 +177,8 @@ Status Analytor::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile* 
             _need_partition_materializing = true;
         }
 
-        if (!(fn.name.function_name == "sum" || fn.name.function_name == "avg" || fn.name.function_name == "count")) {
+        if (!(fn.name.function_name == "sum" || fn.name.function_name == "avg" || fn.name.function_name == "count" ||
+              fn.name.function_name == "max" || fn.name.function_name == "min")) {
             _use_removable_cumulative_process = false;
         }
 
@@ -180,6 +192,9 @@ Status Analytor::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile* 
                 return_type = TYPE_DOUBLE;
             }
             is_input_nullable = !fn.arg_types.empty() && (desc.nodes[0].has_nullable_child || has_outer_join_child);
+            if (_is_merge_funcs && fn.name.function_name == "count") {
+                is_input_nullable = false;
+            }
             auto* func = get_window_function(fn.name.function_name, TYPE_BIGINT, return_type, is_input_nullable,
                                              fn.binary_type, state->func_version());
             _agg_functions[i] = func;
@@ -232,7 +247,7 @@ Status Analytor::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile* 
 
         for (size_t j = 0; j < _agg_expr_ctxs[i].size(); ++j) {
             // We always treat first argument as non const, because most window function has only one args
-            // and cant't handler const column within the function.
+            // and can't handler const column within the function.
             if (j == 0) {
                 _agg_intput_columns[i][j] =
                         ColumnHelper::create_column(_agg_expr_ctxs[i][j]->root()->type(), is_input_nullable);
@@ -339,7 +354,8 @@ Status Analytor::open(RuntimeState* state) {
         }
         AggDataPtr agg_states = _mem_pool->allocate_aligned(_agg_states_total_size, _max_agg_state_align_size);
         SCOPED_THREAD_LOCAL_AGG_STATE_ALLOCATOR_SETTER(_allocator.get());
-        _managed_fn_states.emplace_back(std::make_unique<ManagedFunctionStates>(&_agg_fn_ctxs, agg_states, this));
+        _managed_fn_states.emplace_back(
+                std::make_unique<ManagedFunctionStates<Analytor>>(&_agg_fn_ctxs, agg_states, this));
         return Status::OK();
     };
 
@@ -490,7 +506,7 @@ Status Analytor::_evaluate_const_columns(int i) {
         // Only agg fn has this context.
         return Status::OK();
     }
-    std::vector<ColumnPtr> const_columns;
+    Columns const_columns;
     const_columns.reserve(_agg_expr_ctxs[i].size());
     for (auto& j : _agg_expr_ctxs[i]) {
         ASSIGN_OR_RETURN(auto col, j->root()->evaluate_const(j));
@@ -940,18 +956,27 @@ void Analytor::_update_window_batch(int64_t partition_start, int64_t partition_e
             data_columns[j] = _agg_intput_columns[i][j].get();
         }
 
+        auto current_frame_start = frame_start;
+        auto current_frame_end = frame_end;
         // For lead/lag function, it uses the relationship between the frame_start and frame_end to determine
         // whether NULL value should be generated, so the frame should not be normalized.
         if (!_is_lead_lag_functions[i]) {
-            frame_start = std::max<int64_t>(frame_start, _partition.start);
+            current_frame_start = std::max<int64_t>(current_frame_start, _partition.start);
             // For half unounded window, we have not found the partition end, _found_partition_end.second refers to the next position.
             // And for others, _found_partition_end.second is identical to _partition.end, so we can always use _found_partition_end
             // instead of _partition.end to refer to the current right boundary.
-            frame_end = std::min<int64_t>(frame_end, _partition.end);
+            current_frame_end = std::min<int64_t>(current_frame_end, _partition.end);
         }
-        _agg_functions[i]->update_batch_single_state_with_frame(
-                _agg_fn_ctxs[i], _managed_fn_states[0]->mutable_data() + _agg_states_offsets[i], data_columns,
-                partition_start, partition_end, frame_start, frame_end);
+        if (_is_merge_funcs) {
+            for (size_t j = current_frame_start; j < current_frame_end; j++) {
+                _agg_functions[i]->merge(_agg_fn_ctxs[i], data_columns[0],
+                                         _managed_fn_states[0]->mutable_data() + _agg_states_offsets[i], j);
+            }
+        } else {
+            _agg_functions[i]->update_batch_single_state_with_frame(
+                    _agg_fn_ctxs[i], _managed_fn_states[0]->mutable_data() + _agg_states_offsets[i], data_columns,
+                    partition_start, partition_end, current_frame_start, current_frame_end);
+        }
     }
 }
 
@@ -962,7 +987,7 @@ void Analytor::_update_window_batch_removable_cumulatively() {
         _agg_functions[i]->update_state_removable_cumulatively(
                 _agg_fn_ctxs[i], _managed_fn_states[0]->mutable_data() + _agg_states_offsets[i], &agg_column,
                 _current_row_position, _partition.start, _partition.end, _rows_start_offset, _rows_end_offset, false,
-                false);
+                false, false);
     }
 }
 

@@ -48,6 +48,7 @@ import com.starrocks.qe.ConnectContext;
 import com.starrocks.qe.SessionVariable;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.sql.analyzer.AnalyzeState;
+import com.starrocks.sql.analyzer.AnalyzerUtils;
 import com.starrocks.sql.analyzer.ExpressionAnalyzer;
 import com.starrocks.sql.analyzer.Field;
 import com.starrocks.sql.analyzer.FieldId;
@@ -95,6 +96,7 @@ import com.starrocks.sql.optimizer.operator.OperatorType;
 import com.starrocks.sql.optimizer.operator.Projection;
 import com.starrocks.sql.optimizer.operator.logical.LogicalAggregationOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalApplyOperator;
+import com.starrocks.sql.optimizer.operator.logical.LogicalAssertOneRowOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalCTEAnchorOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalCTEConsumeOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalCTEProduceOperator;
@@ -618,7 +620,11 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
         if (node.getTable().isNativeTableOrMaterializedView()) {
             DistributionSpec distributionSpec = getTableDistributionSpec(node, columnMetaToColRefMap);
             if (node.isMetaQuery()) {
-                scanOperator = new LogicalMetaScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build());
+                scanOperator = LogicalMetaScanOperator.builder().setTable(node.getTable())
+                        .setColRefToColumnMetaMap(colRefToColumnMetaMapBuilder.build())
+                        .setSelectPartitionNames(node.getPartitionNames() == null ? Collections.emptyList() :
+                                node.getPartitionNames().getPartitionNames())
+                        .build();
             } else if (!isMVPlanner) {
                 scanOperator = LogicalOlapScanOperator.builder()
                         .setTable(node.getTable())
@@ -633,6 +639,7 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
                         .setHintsReplicaIds(node.getReplicaIds())
                         .setHasTableHints(node.hasTableHints())
                         .setUsePkIndex(node.isUsePkIndex())
+                        .setSample(node.getSampleClause())
                         .build();
             } else {
                 scanOperator = new LogicalBinlogScanOperator(
@@ -803,7 +810,7 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
     }
 
     @Override
-    public LogicalPlan visitSubquery(SubqueryRelation node, ExpressionMapping context) {
+    public LogicalPlan visitSubqueryRelation(SubqueryRelation node, ExpressionMapping context) {
         LogicalPlan logicalPlan = transform(node.getQueryStatement().getQueryRelation());
         OptExpression subQueryOptExpression = logicalPlan.getRoot();
 
@@ -815,6 +822,10 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
 
         builder = addOrderByLimit(builder, node);
 
+        if (node.isAssertRows()) {
+            LogicalAssertOneRowOperator assertOneRowOperator = LogicalAssertOneRowOperator.createLessEqOne("");
+            builder = builder.withNewRoot(assertOneRowOperator);
+        }
         // store opt expression to ast map if sub-query's type is supported.
         OperatorType operatorType = subQueryOptExpression.getOp().getOpType();
         if (this.mvTransformerContext != null
@@ -1125,7 +1136,7 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
             List<ColumnRefOperator> leftOutputColumns, List<ColumnRefOperator> rightOutputColumns,
             ExpressionMapping expressionMapping) {
         // Step1
-        List<Expr> exprConjuncts = Expr.extractConjuncts(node.getOnPredicate());
+        List<Expr> exprConjuncts = AnalyzerUtils.extractConjuncts(node.getOnPredicate());
 
         List<ScalarOperator> scalarConjuncts = Lists.newArrayList();
         Map<ScalarOperator, SubqueryOperator> allSubqueryPlaceholders = Maps.newHashMap();
@@ -1202,7 +1213,7 @@ public class RelationTransformer implements AstVisitor<LogicalPlan, ExpressionMa
     private boolean isJoinLeftRelatedSubquery(JoinRelation node, Expr joinOnConjunct) {
         List<Subquery> subqueries = Lists.newArrayList();
 
-        List<Expr> elements = Expr.flattenPredicate(joinOnConjunct);
+        List<Expr> elements = AnalyzerUtils.flattenPredicate(joinOnConjunct);
         List<Expr> predicateWithSubquery = Lists.newArrayList();
         for (Expr element : elements) {
             int oldSize = subqueries.size();

@@ -31,7 +31,7 @@ import com.starrocks.authentication.AuthenticationMgr;
 import com.starrocks.catalog.ScalarType;
 import com.starrocks.catalog.Type;
 import com.starrocks.common.AnalysisException;
-import com.starrocks.common.UserException;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.sql.ast.CreateUserStmt;
 import com.starrocks.sql.ast.SetListItem;
@@ -39,6 +39,7 @@ import com.starrocks.sql.ast.SetNamesVar;
 import com.starrocks.sql.ast.SetPassVar;
 import com.starrocks.sql.ast.SetStmt;
 import com.starrocks.sql.ast.SystemVariable;
+import com.starrocks.sql.ast.UserAuthOption;
 import com.starrocks.sql.ast.UserIdentity;
 import com.starrocks.sql.ast.UserVariable;
 import com.starrocks.sql.parser.NodePosition;
@@ -83,10 +84,12 @@ public class SetExecutorTest {
     }
 
     @Test
-    public void testNormal() throws UserException {
+    public void testNormal() throws StarRocksException {
         List<SetListItem> vars = Lists.newArrayList();
-        vars.add(new SetPassVar(new UserIdentity("testUser", "%"),
-                "*88EEBA7D913688E7278E2AD071FDB5E76D76D34B"));
+
+        new SetPassVar(new UserIdentity("testUser", "%"),
+                new UserAuthOption(null, "*88EEBA7D913688E7278E2AD071FDB5E76D76D34B", false, NodePosition.ZERO),
+                NodePosition.ZERO);
         vars.add(new SetNamesVar("utf8"));
         vars.add(new SystemVariable("query_timeout", new IntLiteral(10L)));
 

@@ -37,11 +37,13 @@ package com.starrocks.load.loadv2;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.starrocks.analysis.BrokerDesc;
+import com.starrocks.analysis.FunctionCallExpr;
 import com.starrocks.catalog.AggregateType;
 import com.starrocks.catalog.Column;
 import com.starrocks.catalog.ColumnId;
 import com.starrocks.catalog.Database;
 import com.starrocks.catalog.DistributionInfo;
+import com.starrocks.catalog.FunctionSet;
 import com.starrocks.catalog.HashDistributionInfo;
 import com.starrocks.catalog.KeysType;
 import com.starrocks.catalog.OlapTable;
@@ -110,7 +112,7 @@ public class SparkLoadPendingTaskTest {
         long partitionId = 2L;
         DistributionInfo distributionInfo = new HashDistributionInfo(2, Lists.newArrayList(columns.get(0)));
         PartitionInfo partitionInfo = new SinglePartitionInfo();
-        Partition partition = new Partition(partitionId, "p1", null, distributionInfo);
+        Partition partition = new Partition(partitionId, 21,  "p1", null, distributionInfo);
         List<Partition> partitions = Lists.newArrayList(partition);
 
         // file group
@@ -258,11 +260,11 @@ public class SparkLoadPendingTaskTest {
         int distributionColumnIndex = 1;
         DistributionInfo distributionInfo =
                 new HashDistributionInfo(3, Lists.newArrayList(columns.get(distributionColumnIndex)));
-        Partition partition1 = new Partition(partition1Id, "p1", null,
+        Partition partition1 = new Partition(partition1Id, 21,  "p1", null,
                 distributionInfo);
-        Partition partition2 = new Partition(partition2Id, "p2", null,
+        Partition partition2 = new Partition(partition2Id, 51,  "p2", null,
                 new HashDistributionInfo(4, Lists.newArrayList(columns.get(distributionColumnIndex))));
-        Partition partition3 = new Partition(partition3Id, "tp3", null,
+        Partition partition3 = new Partition(partition3Id, 61,  "tp3", null,
                 distributionInfo);
         int partitionColumnIndex = 0;
         List<Partition> partitions = Lists.newArrayList(partition1, partition2);
@@ -370,8 +372,8 @@ public class SparkLoadPendingTaskTest {
         Assert.assertEquals(columns.get(distributionColumnIndex).getName(), distributionColumns.get(0));
         List<EtlPartition> etlPartitions = etlPartitionInfo.partitions;
         Assert.assertEquals(2, etlPartitions.size());
-        Assert.assertEquals(partition1Id, etlPartitions.get(0).partitionId);
-        Assert.assertEquals(partition2Id, etlPartitions.get(1).partitionId);
+        Assert.assertEquals(21, etlPartitions.get(0).physicalPartitionId);
+        Assert.assertEquals(51, etlPartitions.get(1).physicalPartitionId);
 
         // check file group
         List<EtlFileGroup> etlFileGroups = etlTable.fileGroups;
@@ -409,7 +411,39 @@ public class SparkLoadPendingTaskTest {
         Assert.assertEquals(columns.get(distributionColumnIndex).getName(), distributionColumns.get(0));
         etlPartitions = etlPartitionInfo.partitions;
         Assert.assertEquals(1, etlPartitions.size());
-        Assert.assertEquals(partition3Id, etlPartitions.get(0).partitionId);
+        Assert.assertEquals(61, etlPartitions.get(0).physicalPartitionId);
+    }
+
+    private void internalTestBitmapMapping(SparkLoadPendingTask task, FunctionCallExpr expr, boolean expectLoadException) {
+        try {
+            task.checkBitmapMapping("col1", expr, true);
+            if (expectLoadException) {
+                Assert.fail();
+            }
+        } catch (Exception e) {
+            boolean isLoadException = e instanceof LoadException;
+            if (isLoadException ^ expectLoadException) {
+                Assert.fail();
+            }
+        }
+    }
+
+    @Test
+    public void testBitmapMapping(@Injectable SparkLoadJob sparkLoadJob,
+                                  @Injectable SparkResource resource,
+                                  @Injectable BrokerDesc brokerDesc,
+                                  @Mocked GlobalStateMgr globalStateMgr) {
+        SparkLoadPendingTask task = new SparkLoadPendingTask(sparkLoadJob, Maps.newHashMap(), resource, brokerDesc);
+
+        {
+            FunctionCallExpr expr = new FunctionCallExpr(FunctionSet.BITMAP_COUNT, Lists.newArrayList());
+            internalTestBitmapMapping(task, expr, true);
+        }
+
+        {
+            FunctionCallExpr expr = new FunctionCallExpr(FunctionSet.BITMAP_HASH64, Lists.newArrayList());
+            internalTestBitmapMapping(task, expr, false);
+        }
     }
 
 }

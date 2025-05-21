@@ -14,6 +14,7 @@
 
 package com.starrocks.catalog;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
 import com.starrocks.analysis.Expr;
@@ -23,7 +24,7 @@ import com.starrocks.catalog.mv.MVTimelinessNonPartitionArbiter;
 import com.starrocks.catalog.mv.MVTimelinessRangePartitionArbiter;
 import com.starrocks.common.AnalysisException;
 import com.starrocks.common.util.DebugUtil;
-import com.starrocks.sql.common.PListCell;
+import com.starrocks.sql.common.PCell;
 import com.starrocks.sql.common.UnsupportedException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -33,8 +34,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import static com.starrocks.connector.PartitionUtil.getMVPartitionNameWithList;
 import static com.starrocks.connector.PartitionUtil.getMVPartitionNameWithRange;
+import static com.starrocks.connector.PartitionUtil.getMVPartitionToCells;
 import static com.starrocks.sql.optimizer.OptimizerTraceUtil.logMVPrepare;
 
 /**
@@ -43,8 +44,9 @@ import static com.starrocks.sql.optimizer.OptimizerTraceUtil.logMVPrepare;
 public class MvRefreshArbiter {
     private static final Logger LOG = LogManager.getLogger(MvRefreshArbiter.class);
 
-    public static boolean needsToRefreshTable(MaterializedView mv, Table table, boolean isQueryRewrite) {
-        Optional<Boolean> needsToRefresh = needsToRefreshTable(mv, table, true, isQueryRewrite);
+    public static boolean needsToRefreshTable(MaterializedView mv, BaseTableInfo baseTableInfo, Table table,
+                                              boolean isQueryRewrite) {
+        Optional<Boolean> needsToRefresh = needsToRefreshTable(mv, baseTableInfo, table, true, isQueryRewrite);
         if (needsToRefresh.isPresent()) {
             return needsToRefresh.get();
         }
@@ -62,7 +64,7 @@ public class MvRefreshArbiter {
     public static MvUpdateInfo getMVTimelinessUpdateInfo(MaterializedView mv, boolean isQueryRewrite) {
         // Skip check for sync materialized view.
         if (mv.getRefreshScheme().isSync()) {
-            return new MvUpdateInfo(MvUpdateInfo.MvToRefreshType.NO_REFRESH);
+            return MvUpdateInfo.noRefresh(mv);
         }
 
         // check mv's query rewrite consistency mode property only in query rewrite.
@@ -71,9 +73,9 @@ public class MvRefreshArbiter {
         if (isQueryRewrite) {
             switch (mvConsistencyRewriteMode) {
                 case DISABLE:
-                    return new MvUpdateInfo(MvUpdateInfo.MvToRefreshType.FULL);
+                    return MvUpdateInfo.fullRefresh(mv);
                 case NOCHECK:
-                    return new MvUpdateInfo(MvUpdateInfo.MvToRefreshType.NO_REFRESH);
+                    return MvUpdateInfo.noRefresh(mv);
                 case LOOSE:
                 case CHECKED:
                 default:
@@ -88,7 +90,7 @@ public class MvRefreshArbiter {
             return timelinessArbiter.getMVTimelinessUpdateInfo(mvConsistencyRewriteMode);
         } catch (AnalysisException e) {
             logMVPrepare(mv, "Failed to get mv timeliness info: {}", DebugUtil.getStackTrace(e));
-            return new MvUpdateInfo(MvUpdateInfo.MvToRefreshType.UNKNOWN);
+            return MvUpdateInfo.unknown(mv);
         }
     }
 
@@ -118,6 +120,7 @@ public class MvRefreshArbiter {
      * @return Optional<Boolean> : true if needs to refresh, false if not, empty if there are some unkown results.
      */
     private static Optional<Boolean> needsToRefreshTable(MaterializedView mv,
+                                                         BaseTableInfo baseTableInfo,
                                                          Table baseTable,
                                                          boolean withMv,
                                                          boolean isQueryRewrite) {
@@ -126,8 +129,13 @@ public class MvRefreshArbiter {
             return Optional.of(false);
         } else if (baseTable.isNativeTableOrMaterializedView()) {
             OlapTable olapBaseTable = (OlapTable) baseTable;
+
+            if (!mv.shouldRefreshTable(baseTableInfo.getDbName(), baseTable.name)) {
+                return Optional.of(false);
+            }
+
             Set<String> baseUpdatedPartitionNames = mv.getUpdatedPartitionNamesOfOlapTable(olapBaseTable, isQueryRewrite);
-            if (!baseUpdatedPartitionNames.isEmpty() && mv.shouldRefreshTable(baseTable.name)) {
+            if (!baseUpdatedPartitionNames.isEmpty()) {
                 return Optional.of(true);
             }
 
@@ -186,25 +194,30 @@ public class MvRefreshArbiter {
             if (baseUpdatedPartitionNames == null) {
                 return null;
             }
-            Map<Table, Column> partitionTableAndColumns = mv.getRefBaseTablePartitionColumns();
-            if (!partitionTableAndColumns.containsKey(baseTable)) {
+            Map<Table, List<Column>> refBaseTablePartitionColumns = mv.getRefBaseTablePartitionColumns();
+            if (!refBaseTablePartitionColumns.containsKey(baseTable)) {
                 baseTableUpdateInfo.addToRefreshPartitionNames(baseUpdatedPartitionNames);
                 return baseTableUpdateInfo;
             }
 
             try {
                 List<String> updatedPartitionNamesList = Lists.newArrayList(baseUpdatedPartitionNames);
-                Column partitionColumn = partitionTableAndColumns.get(baseTable);
+                List<Column> refPartitionColumns = refBaseTablePartitionColumns.get(baseTable);
                 PartitionInfo mvPartitionInfo = mv.getPartitionInfo();
                 if (mvPartitionInfo.isListPartition()) {
-                    Map<String, PListCell> partitionNameWithRange = getMVPartitionNameWithList(baseTable,
-                            partitionColumn, updatedPartitionNamesList);
-                    baseTableUpdateInfo.addListPartitionKeys(partitionNameWithRange);
-                    baseTableUpdateInfo.addToRefreshPartitionNames(partitionNameWithRange.keySet());
+                    Map<String, PCell> mvPartitionNameWithList = getMVPartitionToCells(baseTable,
+                            refPartitionColumns, updatedPartitionNamesList);
+                    baseTableUpdateInfo.addPartitionCells(mvPartitionNameWithList);
+                    baseTableUpdateInfo.addToRefreshPartitionNames(mvPartitionNameWithList.keySet());
                 } else if (mvPartitionInfo.isRangePartition()) {
-                    Expr partitionExpr = MaterializedView.getPartitionExpr(mv);
+                    Preconditions.checkArgument(refPartitionColumns.size() == 1,
+                            "Range partition column size must be 1");
+                    Column partitionColumn = refPartitionColumns.get(0);
+                    Optional<Expr> partitionExprOpt = mv.getRangePartitionFirstExpr();
+                    Preconditions.checkArgument(partitionExprOpt.isPresent(),
+                            "Range partition expr must be present");
                     Map<String, Range<PartitionKey>> partitionNameWithRange = getMVPartitionNameWithRange(baseTable,
-                            partitionColumn, updatedPartitionNamesList, partitionExpr);
+                            partitionColumn, updatedPartitionNamesList, partitionExprOpt.get());
                     for (Map.Entry<String, Range<PartitionKey>> e : partitionNameWithRange.entrySet()) {
                         baseTableUpdateInfo.addRangePartitionKeys(e.getKey(), e.getValue());
                     }

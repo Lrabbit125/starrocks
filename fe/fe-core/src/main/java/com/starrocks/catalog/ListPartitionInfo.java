@@ -20,7 +20,10 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.gson.annotations.SerializedName;
+import com.starrocks.analysis.Expr;
 import com.starrocks.analysis.LiteralExpr;
+import com.starrocks.analysis.SlotRef;
+import com.starrocks.analysis.TableName;
 import com.starrocks.common.AnalysisException;
 import com.starrocks.common.DdlException;
 import com.starrocks.common.Pair;
@@ -56,6 +59,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.starrocks.common.util.PropertyAnalyzer.PROPERTIES_REPLICATION_NUM;
+import static com.starrocks.persist.gson.GsonUtils.GSON;
 
 public class ListPartitionInfo extends PartitionInfo {
 
@@ -313,6 +317,10 @@ public class ListPartitionInfo extends PartitionInfo {
         super.isMultiColumnPartition = this.partitionColumnIds.size() > 1;
     }
 
+    public boolean isDeFactoMultiItemPartition() {
+        return MapUtils.isNotEmpty(idToMultiValues) || MapUtils.isNotEmpty(idToMultiLiteralExprValues);
+    }
+
     public Map<Long, List<List<String>>> getIdToMultiValues() {
         return idToMultiValues;
     }
@@ -328,7 +336,7 @@ public class ListPartitionInfo extends PartitionInfo {
      * @param id
      * @return true if the partition can be pruned
      */
-    public boolean pruneById(long id) {
+    public boolean isSingleValuePartition(long id) {
         List<String> values = getIdToValues().get(id);
         if (values != null && values.size() == 1) {
             return true;
@@ -357,6 +365,19 @@ public class ListPartitionInfo extends PartitionInfo {
 
     @Override
     public String toSql(OlapTable table, List<Long> partitionId) {
+        return toSql(table, automaticPartition, true);
+    }
+
+    /**
+     * Generate the SQL statement for creating a list partition
+     * @param table : table
+     * @param isAutomaticPartition : whether the partition type is automatic or by values. If true, only generate partition-by
+     *                             columns without partition values.
+     * @param useGeneratedColumnNameAsExpr : whether to use the generated column name as the expression, if false, use the
+     *                                     generated expression sql as the expression sql rather than the column name.
+     * @return : SQL statement for the list partition
+     */
+    public String toSql(OlapTable table, boolean isAutomaticPartition, boolean useGeneratedColumnNameAsExpr) {
         String replicationNumStr = table.getTableProperty()
                 .getProperties().get(PROPERTIES_REPLICATION_NUM);
         short tableReplicationNum = replicationNumStr == null ?
@@ -364,15 +385,22 @@ public class ListPartitionInfo extends PartitionInfo {
 
         StringBuilder sb = new StringBuilder();
         sb.append("PARTITION BY ");
-        if (!automaticPartition) {
+        if (!isAutomaticPartition) {
             sb.append("LIST");
         }
         sb.append("(");
         sb.append(MetaUtils.getColumnsByColumnIds(table, partitionColumnIds).stream()
-                .map(item -> "`" + item.getName() + "`")
+                .map(item -> {
+                    if (useGeneratedColumnNameAsExpr) {
+                        return  "`" + item.getName() + "`";
+                    } else {
+                        // if the column is generated, we need to use the expression sometimes, eg: mv's active/inactive.
+                        return MetaUtils.getPartitionColumnToSql(item);
+                    }
+                })
                 .collect(Collectors.joining(",")));
         sb.append(")");
-        if (!automaticPartition) {
+        if (!isAutomaticPartition) {
             List<Long> partitionIds = getPartitionIds(false);
             sb.append("(\n");
             if (!idToValues.isEmpty()) {
@@ -385,6 +413,24 @@ public class ListPartitionInfo extends PartitionInfo {
             sb.append("\n)");
         }
         return sb.toString();
+    }
+
+    /**
+     * Get the partition expression for the partition info
+     * @param tableName: table name of the partitioned table
+     * @param idToColumn: map of column id to column
+     * @return: list of defined partition expressions for the table
+     */
+    public List<Expr> getPartitionExprs(TableName tableName, Map<ColumnId, Column> idToColumn) {
+        List<Expr> partitionExprs = Lists.newArrayList();
+        for (Column column : MetaUtils.getColumnsByColumnIds(idToColumn, partitionColumnIds)) {
+            if (column.isGeneratedColumn()) {
+                partitionExprs.add(column.getGeneratedColumnExpr(idToColumn));
+            } else {
+                partitionExprs.add(new SlotRef(tableName, column.getName()));
+            }
+        }
+        return partitionExprs;
     }
 
     private String singleListPartitionSql(OlapTable table, List<Long> partitionIds, short tableReplicationNum) {
@@ -456,20 +502,32 @@ public class ListPartitionInfo extends PartitionInfo {
         return partitionColumnIds.size();
     }
 
+    /**
+     * Use json's format for latter use.
+     */
     public String getValuesFormat(long partitionId) {
         if (!idToLiteralExprValues.isEmpty()) {
             List<LiteralExpr> literalExprs = idToLiteralExprValues.get(partitionId);
-            if (literalExprs != null) {
-                return this.valuesToString(literalExprs);
+            if (CollectionUtils.isNotEmpty(literalExprs)) {
+                List<List<String>> jsonValues = literalExprs.stream()
+                        .map(literalExpr -> Lists.newArrayList(literalExpr.getStringValue()))
+                        .collect(Collectors.toList());
+                return GSON.toJson(jsonValues);
             }
         }
         if (!idToMultiLiteralExprValues.isEmpty()) {
             List<List<LiteralExpr>> lists = idToMultiLiteralExprValues.get(partitionId);
-            if (lists != null) {
-                return this.multiValuesToString(lists);
+            if (CollectionUtils.isNotEmpty(lists)) {
+                List<List<String>> jsonValues = lists.stream()
+                        .map(literalExprs -> literalExprs.stream()
+                                .map(LiteralExpr::getStringValue)
+                                .collect(Collectors.toList()))
+                        .collect(Collectors.toList());
+                return GSON.toJson(jsonValues);
             }
         }
         return "";
+
     }
 
     public void handleNewListPartitionDescs(Map<ColumnId, Column> idToColumn,
@@ -607,6 +665,27 @@ public class ListPartitionInfo extends PartitionInfo {
                     .collect(Collectors.toList());
         } else {
             throw new NotImplementedException("todo");
+        }
+    }
+
+    /**
+     * ListPartition would put the NULL value into a real NULL partition, whose partition value is NullLiteral
+     */
+    @Override
+    public Set<Long> getNullValuePartitions() {
+        if (MapUtils.isNotEmpty(idToLiteralExprValues)) {
+            return idToLiteralExprValues.entrySet().stream()
+                    .filter(x -> x.getValue().stream().anyMatch(LiteralExpr::isConstantNull))
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toSet());
+        } else if (MapUtils.isNotEmpty(idToMultiLiteralExprValues)) {
+            // only if all partition columns are NULL
+            return idToMultiLiteralExprValues.entrySet().stream()
+                    .filter(x -> x.getValue().stream().anyMatch(y -> y.stream().allMatch(LiteralExpr::isConstantNull)))
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toSet());
+        } else {
+            return Sets.newHashSet();
         }
     }
 

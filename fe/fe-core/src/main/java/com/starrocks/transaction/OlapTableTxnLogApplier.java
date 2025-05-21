@@ -45,7 +45,7 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
     public void applyCommitLog(TransactionState txnState, TableCommitInfo commitInfo) {
         Set<Long> errorReplicaIds = txnState.getErrorReplicas();
         for (PartitionCommitInfo partitionCommitInfo : commitInfo.getIdToPartitionCommitInfo().values()) {
-            long partitionId = partitionCommitInfo.getPartitionId();
+            long partitionId = partitionCommitInfo.getPhysicalPartitionId();
             PhysicalPartition partition = table.getPhysicalPartition(partitionId);
             if (partition == null) {
                 LOG.warn("partition {} is dropped, ignore", partitionId);
@@ -65,23 +65,21 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
             }
             // The version of a replication transaction may not continuously
             if (txnState.getSourceType() == TransactionState.LoadJobSourceType.REPLICATION) {
-                long versionDiff = partitionCommitInfo.getVersion() - partition.getNextVersion();
                 partition.setNextVersion(partitionCommitInfo.getVersion() + 1);
-                partition.setNextDataVersion(partition.getNextDataVersion() + versionDiff + 1);
             } else if (txnState.isVersionOverwrite()) {
                 // overwrite empty partition, it's next version will less than overwrite version
                 // otherwise, it's next version will not change
                 if (partitionCommitInfo.getVersion() + 1 > partition.getNextVersion()) {
                     partition.setNextVersion(partitionCommitInfo.getVersion() + 1);
-                    partition.setNextDataVersion(partition.getNextVersion());
                 }
             } else if (partitionCommitInfo.isDoubleWrite()) {
                 partition.setNextVersion(partitionCommitInfo.getVersion() + 1);
-                partition.setNextDataVersion(partition.getNextVersion());
             } else {
                 partition.setNextVersion(partition.getNextVersion() + 1);
-                partition.setNextDataVersion(partition.getNextDataVersion() + 1);
             }
+            // data version == visible version in shared-nothing mode
+            partition.setNextDataVersion(partition.getNextVersion());
+
             LOG.debug("partition[{}] next version[{}]", partitionId, partition.getNextVersion());
         }
     }
@@ -101,7 +99,7 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
         long maxPartitionVersionTime = -1;
 
         for (PartitionCommitInfo partitionCommitInfo : commitInfo.getIdToPartitionCommitInfo().values()) {
-            long partitionId = partitionCommitInfo.getPartitionId();
+            long partitionId = partitionCommitInfo.getPhysicalPartitionId();
             PhysicalPartition partition = table.getPhysicalPartition(partitionId);
             if (partition == null) {
                 LOG.warn("partition {} is dropped, ignore", partitionId);
@@ -124,12 +122,11 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
                         long lastFailedVersion = replica.getLastFailedVersion();
                         long newVersion = version;
                         long lastSucessVersion = replica.getLastSuccessVersion();
-                        if (!txnState.tabletCommitInfosContainsReplica(tablet.getId(), replica.getBackendId(),
-                                replica.getState())
+                        if (txnState.checkReplicaNeedSkip(tablet, replica, partitionCommitInfo)
                                 || errorReplicaIds.contains(replica.getId())) {
-                            // There are 2 cases that we can't update version to visible version and need to 
+                            // There are 2 cases that we can't update version to visible version and need to
                             // set lastFailedVersion.
-                            // 1. this replica doesn't have version publish yet. This maybe happen when clone concurrent 
+                            // 1. this replica doesn't have version publish yet. This maybe happen when clone concurrent
                             //    with data loading.
                             // 2. this replica has data loading failure.
                             //
@@ -167,21 +164,21 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
                         }
                         replica.updateVersionInfo(newVersion, lastFailedVersion, lastSucessVersion);
                     } // end for replicas
-                    if (!skipUpdateReplicas.isEmpty()) {
-                        LOG.warn("skip update replicas to visible version(tabletId_BackendId): {}", skipUpdateReplicas);
-                    }
 
                     if (hasFailedVersion && replicationNum == 1) {
                         TabletScheduler.resetDecommStatForSingleReplicaTabletUnlocked(tablet.getId(), replicas);
                     }
                 } // end for tablets
             } // end for indices
+            if (!skipUpdateReplicas.isEmpty()) {
+                LOG.warn("skip update replicas to visible version(tabletId_BackendId): {}", skipUpdateReplicas);
+            }
 
             long versionTime = partitionCommitInfo.getVersionTime();
             if (txnState.isVersionOverwrite()) {
                 if (partition.getVisibleVersion() < version) {
                     partition.updateVisibleVersion(version, versionTime, txnState.getTransactionId());
-                    partition.setDataVersion(partitionCommitInfo.getDataVersion());
+                    partition.setDataVersion(version); // data version == visible version in shared-nothing mode
                     if (partitionCommitInfo.getVersionEpoch() > 0) {
                         partition.setVersionEpoch(partitionCommitInfo.getVersionEpoch());
                     }
@@ -189,7 +186,7 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
                 }
             } else {
                 partition.updateVisibleVersion(version, versionTime, txnState.getTransactionId());
-                partition.setDataVersion(partitionCommitInfo.getDataVersion());
+                partition.setDataVersion(version); // data version == visible version in shared-nothing mode
                 if (partitionCommitInfo.getVersionEpoch() > 0) {
                     partition.setVersionEpoch(partitionCommitInfo.getVersionEpoch());
                 }

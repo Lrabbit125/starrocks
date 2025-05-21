@@ -48,6 +48,7 @@ import com.starrocks.qe.QueryState.MysqlStateType;
 import com.starrocks.rpc.ThriftConnectionPool;
 import com.starrocks.rpc.ThriftRPCRequestExecutor;
 import com.starrocks.server.GlobalStateMgr;
+import com.starrocks.server.GracefulExitFlag;
 import com.starrocks.sql.analyzer.AstToSQLBuilder;
 import com.starrocks.sql.ast.SetListItem;
 import com.starrocks.sql.ast.SetStmt;
@@ -97,23 +98,25 @@ public class LeaderOpExecutor {
         this.originStmt = originStmt;
         this.ctx = ctx;
         if (status.isNeedToWaitJournalSync()) {
-            this.waitTimeoutMs = ctx.getSessionVariable().getQueryTimeoutS() * 1000;
+            this.waitTimeoutMs = ctx.getExecTimeout() * 1000;
         } else {
             this.waitTimeoutMs = 0;
         }
-        // set thriftTimeoutMs to query_timeout + thrift_rpc_timeout_ms
+        // set thriftTimeoutMs to exec timeout + thrift_rpc_timeout_ms
         // so that we can return an execution timeout instead of a network timeout
-        this.thriftTimeoutMs = ctx.getSessionVariable().getQueryTimeoutS() * 1000 + Config.thrift_rpc_timeout_ms;
+        this.thriftTimeoutMs = ctx.getExecTimeout() * 1000 + Config.thrift_rpc_timeout_ms;
         if (this.thriftTimeoutMs < 0) {
-            this.thriftTimeoutMs = ctx.getSessionVariable().getQueryTimeoutS() * 1000;
+            this.thriftTimeoutMs = ctx.getExecTimeout() * 1000;
         }
         this.parsedStmt = parsedStmt;
     }
 
     public void execute() throws Exception {
         forward();
-        LOG.info("forwarding to master get result max journal id: {}", result.maxJournalId);
-        ctx.getGlobalStateMgr().getJournalObservable().waitOn(result.maxJournalId, waitTimeoutMs);
+        if (!GracefulExitFlag.isGracefulExit() && !GlobalStateMgr.getCurrentState().isLeader()) {
+            LOG.info("forwarding to leader get result max journal id: {}", result.maxJournalId);
+            ctx.getGlobalStateMgr().getJournalObservable().waitOn(result.maxJournalId, waitTimeoutMs);
+        }
 
         if (result.state != null) {
             MysqlStateType state = MysqlStateType.fromString(result.state);

@@ -45,8 +45,6 @@ import com.google.gson.annotations.SerializedName;
 import com.starrocks.analysis.DescriptorTable.ReferencedPartitionInfo;
 import com.starrocks.analysis.Expr;
 import com.starrocks.analysis.LiteralExpr;
-import com.starrocks.catalog.constraint.ForeignKeyConstraint;
-import com.starrocks.catalog.constraint.UniqueConstraint;
 import com.starrocks.common.Config;
 import com.starrocks.common.util.TimeUtils;
 import com.starrocks.common.util.concurrent.lock.LockType;
@@ -76,7 +74,7 @@ import java.util.stream.Collectors;
 import static com.starrocks.server.CatalogMgr.ResourceMappingCatalog.getResourceMappingCatalogName;
 import static com.starrocks.server.CatalogMgr.ResourceMappingCatalog.isResourceMappingCatalog;
 
-public class HiveTable extends Table implements HiveMetaStoreTable {
+public class HiveTable extends Table {
     public enum HiveTableType {
         VIRTUAL_VIEW,
         EXTERNAL_TABLE,
@@ -176,12 +174,13 @@ public class HiveTable extends Table implements HiveMetaStoreTable {
         return catalogName == null ? getResourceMappingCatalogName(resourceName, "hive") : catalogName;
     }
 
-    public String getDbName() {
+    @Override
+    public String getCatalogDBName() {
         return hiveDbName;
     }
 
     @Override
-    public String getTableName() {
+    public String getCatalogTableName() {
         return hiveTableName;
     }
 
@@ -210,6 +209,7 @@ public class HiveTable extends Table implements HiveMetaStoreTable {
         return partColumnNames;
     }
 
+    @Override
     public List<String> getDataColumnNames() {
         return dataColumnNames;
     }
@@ -219,6 +219,12 @@ public class HiveTable extends Table implements HiveMetaStoreTable {
         return partColumnNames.size() == 0;
     }
 
+    @Override
+    public boolean isHMSExternalTable() {
+        return hiveTableType.equals(HiveTableType.EXTERNAL_TABLE);
+    }
+
+    @Override
     public String getTableLocation() {
         return this.tableLocation;
     }
@@ -400,16 +406,6 @@ public class HiveTable extends Table implements HiveMetaStoreTable {
         sb.append(", createTime=").append(createTime);
         sb.append('}');
         return sb.toString();
-    }
-
-    @Override
-    public List<UniqueConstraint> getUniqueConstraints() {
-        return uniqueConstraints;
-    }
-
-    @Override
-    public List<ForeignKeyConstraint> getForeignKeyConstraints() {
-        return foreignKeyConstraints;
     }
 
     @Override
