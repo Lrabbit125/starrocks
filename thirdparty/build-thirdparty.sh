@@ -1382,6 +1382,8 @@ build_icu() {
     # Use a subshell to prevent LD_LIBRARY_PATH from affecting the external environment
     (
         export LD_LIBRARY_PATH=${STARROCKS_GCC_HOME}/lib:${STARROCKS_GCC_HOME}/lib64:${LD_LIBRARY_PATH:-}
+        export CFLAGS="-O3 -fno-omit-frame-pointer -fPIC"
+        export CXXFLAGS="-O3 -fno-omit-frame-pointer -fPIC"
         ./runConfigureICU Linux --prefix=$TP_INSTALL_DIR --enable-static --disable-shared
         make -j$PARALLEL
         make install
@@ -1410,7 +1412,8 @@ build_libxml2() {
         -DLIBXML2_WITH_LZMA=OFF \
         -DLIBXML2_WITH_PYTHON=OFF \
         -DLIBXML2_WITH_ZLIB=OFF \
-        -DLIBXML2_WITH_TESTS=OFF
+        -DLIBXML2_WITH_TESTS=OFF \
+        -DCMAKE_INSTALL_LIBDIR=lib
 
     ${BUILD_SYSTEM} -j "${PARALLEL}"
     ${BUILD_SYSTEM} install
@@ -1431,7 +1434,8 @@ build_azure() {
         -DCURL_LIBRARY=$TP_INSTALL_DIR/lib/libcurl.a \
         -DOPENSSL_ROOT_DIR=$TP_INSTALL_DIR \
         -DOPENSSL_USE_STATIC_LIBS=TRUE \
-        -DLibXml2_ROOT=$TP_INSTALL_DIR
+        -DLibXml2_ROOT=$TP_INSTALL_DIR \
+        -DCMAKE_INSTALL_LIBDIR=lib
 
     ${BUILD_SYSTEM} -j "${PARALLEL}"
     ${BUILD_SYSTEM} install

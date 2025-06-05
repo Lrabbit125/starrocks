@@ -43,6 +43,7 @@
 #include "common/config.h"
 #include "common/configbase.h"
 #include "common/logging.h"
+#include "common/process_exit.h"
 #include "exec/pipeline/driver_limiter.h"
 #include "exec/pipeline/pipeline_driver_executor.h"
 #include "exec/pipeline/query_context.h"
@@ -557,6 +558,17 @@ Status ExecEnv::init(const std::vector<StorePath>& store_paths, bool as_cn) {
     }
     setenv(staros::starlet::fslib::kFslibCacheDir.c_str(), config::starlet_cache_dir.c_str(), 1);
 
+    int32_t max_thread_count = config::transaction_publish_version_worker_count;
+    if (max_thread_count <= 0) {
+        max_thread_count = CpuInfo::num_cores();
+    }
+    RETURN_IF_ERROR(ThreadPoolBuilder("put_aggregate_metadata")
+                            .set_min_threads(1)
+                            .set_max_threads(std::max(1, max_thread_count))
+                            .set_max_queue_size(std::numeric_limits<int>::max())
+                            .build(&_put_aggregate_metadata_thread_pool));
+    REGISTER_THREAD_POOL_METRICS(put_aggregate_metadata, _put_aggregate_metadata_thread_pool);
+
 #elif defined(BE_TEST)
     _lake_location_provider = std::make_shared<lake::FixedLocationProvider>(_store_paths.front().path);
     _lake_update_manager =
@@ -564,6 +576,11 @@ Status ExecEnv::init(const std::vector<StorePath>& store_paths, bool as_cn) {
     _lake_tablet_manager =
             new lake::TabletManager(_lake_location_provider, _lake_update_manager, config::lake_metadata_cache_limit);
     _lake_replication_txn_manager = new lake::ReplicationTxnManager(_lake_tablet_manager);
+    RETURN_IF_ERROR(ThreadPoolBuilder("put_aggregate_metadata_pool")
+                            .set_min_threads(1)
+                            .set_max_threads(1)
+                            .set_max_queue_size(std::numeric_limits<int>::max())
+                            .build(&_put_aggregate_metadata_thread_pool));
 #endif
 
     _agent_server = new AgentServer(this, false);
@@ -629,6 +646,10 @@ void ExecEnv::stop() {
 
     if (_pipeline_sink_io_pool) {
         _pipeline_sink_io_pool->shutdown();
+    }
+
+    if (_put_aggregate_metadata_thread_pool) {
+        _put_aggregate_metadata_thread_pool->shutdown();
     }
 
     if (_agent_server) {
@@ -757,6 +778,7 @@ void ExecEnv::destroy() {
     SAFE_DELETE(_diagnose_daemon);
     _dictionary_cache_pool.reset();
     _automatic_partition_pool.reset();
+    _put_aggregate_metadata_thread_pool.reset();
     _metrics = nullptr;
 }
 
@@ -774,8 +796,14 @@ void ExecEnv::_wait_for_fragments_finish() {
     size_t running_fragments = _get_running_fragments_count();
     size_t loop_secs = 0;
 
-    while (running_fragments > 0 && loop_secs < max_loop_secs) {
-        LOG(INFO) << running_fragments << " fragment(s) are still running...";
+    // TODO: decouple the heartbeat with the graceful exit
+    // only wait for frontend's heartbeat when the node is ever received heartbeats from the frontend
+    bool need_wait_frontend_hb = config::graceful_exit_wait_for_frontend_heartbeat && get_backend_id().has_value();
+
+    while ((running_fragments > 0 || (need_wait_frontend_hb && !is_frontend_aware_of_exit())) &&
+           loop_secs < max_loop_secs) {
+        LOG(INFO) << "Frontend is aware of exit: " << is_frontend_aware_of_exit() << ", " << running_fragments
+                  << " fragment(s) are still running...";
         sleep(1);
         running_fragments = _get_running_fragments_count();
         loop_secs++;

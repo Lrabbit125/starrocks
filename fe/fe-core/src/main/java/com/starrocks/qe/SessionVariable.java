@@ -192,6 +192,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String CHUNK_SIZE = "chunk_size";
     public static final String STREAMING_PREAGGREGATION_MODE = "streaming_preaggregation_mode";
     public static final String DISABLE_COLOCATE_JOIN = "disable_colocate_join";
+    public static final String DISABLE_COLOCATE_SET = "disable_colocate_set";
     public static final String DISABLE_BUCKET_JOIN = "disable_bucket_join";
     public static final String PARALLEL_FRAGMENT_EXEC_INSTANCE_NUM = "parallel_fragment_exec_instance_num";
     public static final String MAX_PARALLEL_SCAN_INSTANCE_NUM = "max_parallel_scan_instance_num";
@@ -434,6 +435,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String GLOBAL_RUNTIME_FILTER_RPC_TIMEOUT = "global_runtime_filter_rpc_timeout";
     public static final String RUNTIME_FILTER_EARLY_RETURN_SELECTIVITY = "runtime_filter_early_return_selectivity";
     public static final String ENABLE_TOPN_RUNTIME_FILTER = "enable_topn_runtime_filter";
+    public static final String AGG_IN_FILTER_LIMIT = "agg_in_filter_limit";
     public static final String GLOBAL_RUNTIME_FILTER_RPC_HTTP_MIN_SIZE = "global_runtime_filter_rpc_http_min_size";
     public static final String ENABLE_JOIN_RUNTIME_FILTER_PUSH_DOWN = "enable_join_runtime_filter_push_down";
     public static final String ENABLE_JOIN_RUNTIME_BITSET_FILTER = "enable_join_runtime_bitset_filter";
@@ -913,6 +915,8 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String COLUMN_VIEW_CONCAT_BYTES_LIMIT = "column_view_concat_bytes_limit";
     public static final String ENABLE_DEFER_PROJECT_AFTER_TOPN = "enable_defer_project_after_topn";
 
+    public static final String ENABLE_MULTI_CAST_LIMIT_PUSH_DOWN = "enable_multi_cast_limit_push_down";
+
     public static final List<String> DEPRECATED_VARIABLES = ImmutableList.<String>builder()
             .add(CODEGEN_LEVEL)
             .add(MAX_EXECUTION_TIME)
@@ -1172,6 +1176,8 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     @VariableMgr.VarAttr(name = DISABLE_COLOCATE_JOIN)
     private boolean disableColocateJoin = false;
 
+    @VariableMgr.VarAttr(name = DISABLE_COLOCATE_SET)
+    private boolean disableColocateSet = false;
     @VariableMgr.VarAttr(name = CBO_USE_CORRELATED_JOIN_ESTIMATE, flag = VariableMgr.INVISIBLE)
     private boolean useCorrelatedJoinEstimate = true;
 
@@ -1503,7 +1509,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     @VariableMgr.VarAttr(name = NEW_PLANER_AGG_STAGE)
     private int newPlannerAggStage = SessionVariableConstants.AggregationStage.AUTO.ordinal();
 
-    @VariableMgr.VarAttr(name = TRANSMISSION_COMPRESSION_TYPE) 
+    @VariableMgr.VarAttr(name = TRANSMISSION_COMPRESSION_TYPE)
     private String transmissionCompressionType = "AUTO";
 
     // if a packet's size is larger than RPC_HTTP_MIN_SIZE, it will use RPC via http, as the std rpc has 2GB size limit.
@@ -1539,6 +1545,9 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     @VariableMgr.VarAttr(name = ENABLE_TOPN_RUNTIME_FILTER)
     private boolean enableTopNRuntimeFilter = true;
+
+    @VariableMgr.VarAttr(name = AGG_IN_FILTER_LIMIT, flag = VariableMgr.INVISIBLE)
+    private int aggInFilterLimit = 1024;
 
     // Parameters to determine the usage of runtime filter
     // Either the build_max or probe_min equal to 0 would force use the filter,
@@ -1716,7 +1725,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     private boolean enableRewritePartitionColumnMinMax = true;
 
     @VarAttr(name = ENABLE_REWRITE_SIMPLE_AGG_TO_HDFS_SCAN)
-    private boolean enableRewriteSimpleAggToHdfsScan = false;
+    private boolean enableRewriteSimpleAggToHdfsScan = true;
 
     @VarAttr(name = ENABLE_EVALUATE_SCHEMA_SCAN_RULE)
     private boolean enableEvaluateSchemaScanRule = true;
@@ -1837,6 +1846,20 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     @VarAttr(name = ENABLE_DEFER_PROJECT_AFTER_TOPN)
     private boolean enableDeferProjectAfterTopN = true;
+
+    // When this variable is enabled, the limits of consumers a CTE are pushed down to the producer of the CTE.
+    // The limits can then be applied before the exchange.
+    // For example:
+    //
+    //   Fragment-2              Fragment-3            Fragment-2              Fragment-3
+    //        \                       /                      \                    /
+    //       limit-1              limit-2                shuffle by v1       shuffle by v2
+    //           \                 /              ==>           \               /
+    //    shuffle by v1      shuffle by v2                    limit-1        limit-2
+    //              \           /                                 \           /
+    //                Fragment-1                                    Fragment-1
+    @VarAttr(name = ENABLE_MULTI_CAST_LIMIT_PUSH_DOWN, flag = VariableMgr.INVISIBLE)
+    private boolean enableMultiCastLimitPushDown = true;
 
     public int getCboPruneJsonSubfieldDepth() {
         return cboPruneJsonSubfieldDepth;
@@ -3090,6 +3113,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
         return disableColocateJoin;
     }
 
+    public boolean isDisableColocateSet() {
+        return disableColocateSet;
+    }
+
+    public void setDisableColocateSet(boolean value) {
+        disableColocateSet = value;
+    }
+
     public int getParallelExecInstanceNum() {
         return parallelExecInstanceNum;
     }
@@ -3102,6 +3133,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
         return warehouseName;
     }
 
+    // NOTE: It's not recommended to set warehouse name in session variable, use ConnectContext#setCurrentWarehouse to change.
     public void setWarehouseName(String warehouseName) {
         this.warehouseName = warehouseName;
     }
@@ -3544,6 +3576,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public boolean getEnableTopNRuntimeFilter() {
         return enableTopNRuntimeFilter;
+    }
+
+    public int getAggInFilterLimit() {
+        return aggInFilterLimit;
     }
 
     public void setGlobalRuntimeFilterBuildMaxSize(long globalRuntimeFilterBuildMaxSize) {
@@ -4993,6 +5029,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setSpmRewriteTimeoutMs(int spmRewriteTimeoutMs) {
         this.spmRewriteTimeoutMs = spmRewriteTimeoutMs;
+    }
+
+    public void setEnableMultiCastLimitPushDown(boolean enableMultiCastLimitPushDown) {
+        this.enableMultiCastLimitPushDown = enableMultiCastLimitPushDown;
+    }
+
+    public boolean isEnableMultiCastLimitPushDown() {
+        return enableMultiCastLimitPushDown;
     }
 
     // Serialize to thrift object

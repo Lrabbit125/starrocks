@@ -3,7 +3,7 @@ displayed_sidebar: docs
 sidebar_position: 20
 ---
 
-# Authenticate with Security Integration
+# セキュリティインテグレーションで認証
 
 StarRocks をセキュリティインテグレーションを使用して外部認証システムと統合します。
 
@@ -119,12 +119,12 @@ PROPERTIES (
 ##### group_provider
 
 - 必須: いいえ
-- 説明: セキュリティインテグレーションと組み合わせるグループプロバイダーの名前。複数のグループプロバイダーはカンマで区切られます。設定されると、StarRocks はログイン時に各指定プロバイダーの下でユーザーのグループ情報を記録します。v3.5 以降でサポートされています。Group Provider を有効にする詳細な手順については、[Authenticate User Groups](../group_provider.md) を参照してください。
+- 説明: セキュリティインテグレーションと組み合わせる Group Provider の名前。複数の Group Provider はカンマで区切られます。設定されると、StarRocks はログイン時に各指定プロバイダーの下でユーザーのグループ情報を記録します。v3.5 以降でサポートされています。Group Provider を有効にする詳細な手順については、[Authenticate User Groups](../group_provider.md) を参照してください。
 
 ##### authenticated_group_list
 
 - 必須: いいえ
-- 説明: StarRocks にログインを許可されるグループの名前。複数のグループはカンマで区切られます。指定されたグループが結合されたグループプロバイダーによって取得できることを確認してください。v3.5 以降でサポートされています。
+- 説明: StarRocks にログインを許可されるグループの名前。複数のグループはカンマで区切られます。指定されたグループが結合された Group Provider によって取得できることを確認してください。v3.5 以降でサポートされています。
 
 ##### comment
 
@@ -269,17 +269,16 @@ PROPERTIES (
 
 ## 認証チェーンを構成する
 
-セキュリティインテグレーションが作成されると、新しい認証方法として StarRocks クラスターに追加されます。`authentication_chain` という FE 動的構成項目を設定して、認証方法の順序を設定することでセキュリティインテグレーションを有効にする必要があります。この場合、セキュリティインテグレーションを優先認証方法として設定し、その後に StarRocks クラスターのネイティブ認証を設定します。
+セキュリティインテグレーションが作成されると、新しい認証方法として StarRocks クラスターに追加されます。`authentication_chain` という FE 動的構成項目を設定して、認証方法の順序を設定することでセキュリティインテグレーションを有効にする必要があります。
 
 ```SQL
 ADMIN SET FRONTEND CONFIG (
-    "authentication_chain" = "<security_integration_name>[... ,], [native]"
+    "authentication_chain" = "<security_integration_name>[... ,]"
 );
 ```
 
 :::note
-- `authentication_chain` が指定されていない場合、ネイティブ認証のみが有効になります。
-- `authentication_chain` が設定されると、StarRocks は最も優先される認証方法でユーザーログインを最初に検証します。優先認証方法でログインが失敗した場合、クラスターは指定された順序に従って次の認証方法を試みます。
+- StarRocks はローカルユーザーのネイティブ認証を優先します。同じユーザー名を持つローカルユーザーが存在しない場合、`authentication_chain` で設定した順序で認証が行われます。ネイティブ認証方式でログインに失敗した場合、クラスタは指定された順序で次の認証方式を試行します。
 - OAuth 2.0 セキュリティインテグレーションを除いて、`authentication_chain` に複数のセキュリティインテグレーションを指定できます。複数の OAuth 2.0 セキュリティインテグレーションを指定することや、他のセキュリティインテグレーションと一緒に指定することはできません。
 :::
 

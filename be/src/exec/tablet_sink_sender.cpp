@@ -42,7 +42,7 @@ TabletSinkSender::TabletSinkSender(PUniqueId load_id, int64_t txn_id, IndexIdToT
 
 Status TabletSinkSender::send_chunk(const OlapTableSchemaParam* schema,
                                     const std::vector<OlapTablePartition*>& partitions,
-                                    const std::vector<uint32_t>& tablet_indexes,
+                                    const std::vector<uint32_t>& record_hashes,
                                     const std::vector<uint16_t>& validate_select_idx,
                                     std::unordered_map<int64_t, std::set<int64_t>>& index_id_partition_id,
                                     Chunk* chunk) {
@@ -58,8 +58,10 @@ Status TabletSinkSender::send_chunk(const OlapTableSchemaParam* schema,
             auto* index = schema->indexes()[i];
             for (size_t j = 0; j < selection_size; ++j) {
                 uint16_t selection = validate_select_idx[j];
-                index_id_partition_id[index->index_id].emplace(partitions[selection]->id);
-                _tablet_ids[selection] = partitions[selection]->indexes[i].tablets[tablet_indexes[selection]];
+                const auto* partition = partitions[selection];
+                index_id_partition_id[index->index_id].emplace(partition->id);
+                const auto& virtual_buckets = partition->indexes[i].virtual_buckets;
+                _tablet_ids[selection] = virtual_buckets[record_hashes[selection] % virtual_buckets.size()];
             }
             RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));
         }
@@ -68,8 +70,10 @@ Status TabletSinkSender::send_chunk(const OlapTableSchemaParam* schema,
         for (size_t i = 0; i < index_size; ++i) {
             auto* index = schema->indexes()[i];
             for (size_t j = 0; j < num_rows; ++j) {
-                index_id_partition_id[index->index_id].emplace(partitions[j]->id);
-                _tablet_ids[j] = partitions[j]->indexes[i].tablets[tablet_indexes[j]];
+                const auto* partition = partitions[j];
+                index_id_partition_id[index->index_id].emplace(partition->id);
+                const auto& virtual_buckets = partition->indexes[i].virtual_buckets;
+                _tablet_ids[j] = virtual_buckets[record_hashes[j] % virtual_buckets.size()];
             }
             RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));
         }

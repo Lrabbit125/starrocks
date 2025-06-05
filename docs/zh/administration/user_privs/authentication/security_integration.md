@@ -119,12 +119,12 @@ PROPERTIES (
 ##### group_provider
 
 - 必需：否
-- 描述：与安全集成结合使用的组提供者名称。多个组提供者用逗号分隔。设置后，StarRocks 将在用户登录时记录每个指定提供者下的用户组信息。从 v3.5 开始支持。有关启用 Group Provider 的详细说明，请参阅 [Authenticate User Groups](../group_provider.md)。
+- 描述：与安全集成结合使用的 Group Provider 名称。多个 Group Provider 用逗号分隔。设置后，StarRocks 将在用户登录时记录每个指定提供者下的用户组信息。从 v3.5 开始支持。有关启用 Group Provider 的详细说明，请参阅 [Authenticate User Groups](../group_provider.md)。
 
 ##### authenticated_group_list
 
 - 必需：否
-- 描述：允许登录到 StarRocks 的组名称。多个组用逗号分隔。确保指定的组可以通过组合的组提供者检索。从 v3.5 开始支持。
+- 描述：允许登录到 StarRocks 的组名称。多个组用逗号分隔。确保指定的组可以通过组合的 Group Provider 检索。从 v3.5 开始支持。
 
 ##### comment
 
@@ -269,17 +269,16 @@ PROPERTIES (
 
 ## 配置身份验证链
 
-创建安全集成后，它将作为新的身份验证方法添加到您的 StarRocks 集群中。您必须通过设置 FE 动态配置项 `authentication_chain` 来启用安全集成。在这种情况下，您需要将安全集成设置为首选身份验证方法，然后是 StarRocks 集群的本地身份验证。
+创建安全集成后，它将作为新的身份验证方法添加到您的 StarRocks 集群中。您必须通过设置 FE 动态配置项 `authentication_chain` 来启用安全集成。
 
 ```SQL
 ADMIN SET FRONTEND CONFIG (
-    "authentication_chain" = "<security_integration_name>[... ,], [native]"
+    "authentication_chain" = "<security_integration_name>[... ,]"
 );
 ```
 
 :::note
-- 如果未指定 `authentication_chain`，则仅启用本地身份验证。
-- 一旦设置了 `authentication_chain`，StarRocks 首先使用首选身份验证方法验证用户登录。如果使用首选身份验证方法登录失败，集群将按照指定的顺序尝试下一个身份验证方法。
+- StarRocks 会优先使用本地用户进行验证。如本地不存在同名用户，则按照`authentication_chain`的配置顺序进行认证。如果使用身份验证方法登录失败，集群将按照指定的顺序尝试下一个身份验证方法。
 - 您可以在 `authentication_chain` 中指定多个安全集成，但不能指定多个 OAuth 2.0 安全集成或将其与其他安全集成一起指定。
 :::
 

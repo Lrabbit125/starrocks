@@ -171,7 +171,7 @@ public class StatementPlanner {
         } catch (Throwable e) {
             if (stmt instanceof DmlStmt) {
                 //If it is an explicit transaction, the transaction will not be aborted automatically.
-                if (session.getExplicitTxnState() == null) {
+                if (session.getTxnId() == 0) {
                     abortTransaction((DmlStmt) stmt, session, e.getMessage());
                 }
             }
@@ -465,8 +465,8 @@ public class StatementPlanner {
     private static void beginTransaction(DmlStmt stmt, ConnectContext session)
             throws BeginTransactionException, RunningTxnExceedException, AnalysisException, LabelAlreadyUsedException,
             DuplicatedRequestException {
-        if (session.getExplicitTxnState() != null) {
-            stmt.setTxnId(session.getExplicitTxnState().getTransactionState().getTransactionId());
+        if (session.getTxnId() != 0) {
+            stmt.setTxnId(session.getTxnId());
             return;
         }
 
@@ -551,7 +551,6 @@ public class StatementPlanner {
                 || targetTable.isTableFunctionTable() || targetTable.isBlackHoleTable()) {
             // schema table and iceberg and hive table does not need txn
         } else {
-            long warehouseId = session.getCurrentWarehouseId();
             long dbId = db.getId();
             txnId = transactionMgr.beginTransaction(
                     dbId,
@@ -561,7 +560,7 @@ public class StatementPlanner {
                             FrontendOptions.getLocalHostAddress()),
                     sourceType,
                     session.getExecTimeout(),
-                    warehouseId);
+                    session.getCurrentComputeResource());
 
             // add table indexes to transaction state
             if (targetTable instanceof OlapTable) {

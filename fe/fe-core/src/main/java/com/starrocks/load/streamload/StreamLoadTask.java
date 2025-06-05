@@ -38,6 +38,7 @@ import com.starrocks.common.util.LogKey;
 import com.starrocks.common.util.ProfileManager;
 import com.starrocks.common.util.RuntimeProfile;
 import com.starrocks.common.util.TimeUtils;
+import com.starrocks.common.util.UUIDUtil;
 import com.starrocks.common.util.concurrent.lock.LockTimeoutException;
 import com.starrocks.common.util.concurrent.lock.LockType;
 import com.starrocks.common.util.concurrent.lock.Locker;
@@ -56,6 +57,7 @@ import com.starrocks.qe.scheduler.Coordinator;
 import com.starrocks.rpc.ThriftConnectionPool;
 import com.starrocks.rpc.ThriftRPCRequestExecutor;
 import com.starrocks.server.GlobalStateMgr;
+import com.starrocks.server.WarehouseManager;
 import com.starrocks.service.FrontendOptions;
 import com.starrocks.sql.LoadPlanner;
 import com.starrocks.task.LoadEtlTask;
@@ -76,6 +78,7 @@ import com.starrocks.transaction.TransactionState.TxnSourceType;
 import com.starrocks.transaction.TxnCommitAttachment;
 import com.starrocks.warehouse.LoadJobWithWarehouse;
 import com.starrocks.warehouse.WarehouseIdleChecker;
+import com.starrocks.warehouse.cngroup.ComputeResource;
 import io.netty.handler.codec.http.HttpHeaders;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -87,7 +90,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.starrocks.common.ErrorCode.ERR_NO_PARTITIONS_HAVE_DATA_LOAD;
@@ -196,6 +198,8 @@ public class StreamLoadTask extends AbstractTxnStateChangeCallback
     private OlapTable table;
     private long taskDeadlineMs;
     private boolean isCommitting;
+    // needs to acquire cngroup for each beginTxn.
+    private ComputeResource computeResource = WarehouseManager.DEFAULT_RESOURCE;
 
     private ReentrantReadWriteLock lock;
 
@@ -229,8 +233,7 @@ public class StreamLoadTask extends AbstractTxnStateChangeCallback
     public StreamLoadTask(long id, Database db, OlapTable table, String label, String user, String clientIp,
                           long timeoutMs, int channelNum, int channelId, long createTimeMs, long warehouseId) {
         this.id = id;
-        UUID uuid = UUID.randomUUID();
-        this.loadId = new TUniqueId(uuid.getMostSignificantBits(), uuid.getLeastSignificantBits());
+        this.loadId = UUIDUtil.genTUniqueId();
         this.dbId = db.getId();
         this.dbName = db.getFullName();
         this.tableId = table.getId();
@@ -253,7 +256,6 @@ public class StreamLoadTask extends AbstractTxnStateChangeCallback
         this.txnId = -1;
         this.errorMsg = null;
         this.warehouseId = warehouseId;
-
         init();
     }
 
@@ -827,8 +829,7 @@ public class StreamLoadTask extends AbstractTxnStateChangeCallback
                 streamLoadInfo.getNegative(), channelNum, streamLoadInfo.getColumnExprDescs(), streamLoadInfo, label,
                 streamLoadInfo.getTimeout());
 
-        loadPlanner.setWarehouseId(streamLoadInfo.getWarehouseId());
-
+        loadPlanner.setComputeResource(streamLoadInfo.getComputeResource());
         loadPlanner.plan();
 
         coord = getCoordinatorFactory().createStreamLoadScheduler(loadPlanner);
@@ -960,7 +961,7 @@ public class StreamLoadTask extends AbstractTxnStateChangeCallback
                 new TxnCoordinator(TxnSourceType.FE, FrontendOptions.getLocalHostAddress()),
                 isBackendTxn ? TransactionState.LoadJobSourceType.BACKEND_STREAMING
                     : TransactionState.LoadJobSourceType.FRONTEND_STREAMING, id,
-                timeoutMs / 1000, warehouseId);
+                timeoutMs / 1000, computeResource);
     }
 
     public void unprotectedPrepareTxn() throws StarRocksException, LockTimeoutException {

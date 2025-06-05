@@ -34,6 +34,7 @@ import com.starrocks.system.ComputeNode;
 import com.starrocks.utframe.StarRocksAssert;
 import com.starrocks.utframe.UtFrameUtils;
 import com.starrocks.warehouse.Warehouse;
+import com.starrocks.warehouse.cngroup.ComputeResource;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -91,7 +92,7 @@ public class VacuumTest {
                     ")\n" +
                     "DUPLICATE KEY(`v1`)\n" +
                     "DISTRIBUTED BY HASH(v1) BUCKETS 1\n" +
-                    "PROPERTIES('enable_partition_aggregation' = 'true');");
+                    "PROPERTIES('file_bundling' = 'true');");
 
         db = GlobalStateMgr.getCurrentState().getLocalMetastore().getDb(GlobalStateMgrTestUtil.testDb1);
         olapTable = (OlapTable) GlobalStateMgr.getCurrentState().getLocalMetastore()
@@ -104,7 +105,8 @@ public class VacuumTest {
         
 
         when(warehouseManager.getBackgroundWarehouse()).thenReturn(mock(Warehouse.class));
-        when(warehouseManager.getComputeNodeAssignedToTablet(anyString(), any(LakeTablet.class))).thenReturn(computeNode);
+        when(warehouseManager.getComputeNodeAssignedToTablet((ComputeResource) any(), any(LakeTablet.class)))
+                .thenReturn(computeNode);
 
         when(computeNode.getHost()).thenReturn("localhost");
         when(computeNode.getBrpcPort()).thenReturn(8080);
@@ -123,6 +125,7 @@ public class VacuumTest {
         partition = olapTable.getPhysicalPartitions().stream().findFirst().orElse(null);
         partition.setVisibleVersion(10L, System.currentTimeMillis());
         partition.setMinRetainVersion(10L);
+        partition.setMetadataSwitchVersion(5L);
         partition.setLastSuccVacuumVersion(4L);
 
         AutovacuumDaemon autovacuumDaemon = new AutovacuumDaemon();
@@ -154,6 +157,7 @@ public class VacuumTest {
             autovacuumDaemon.testVacuumPartitionImpl(db, olapTable, partition);
         }
         Assert.assertEquals(7L, partition.getLastSuccVacuumVersion());
+        Assert.assertEquals(0L, partition.getMetadataSwitchVersion());
     }
 
     @Test
@@ -202,6 +206,7 @@ public class VacuumTest {
         partition.setVisibleVersion(10L, System.currentTimeMillis());
         partition.setMinRetainVersion(10L);
         partition.setLastSuccVacuumVersion(4L);
+        partition.setMetadataSwitchVersion(5L);
         AutovacuumDaemon autovacuumDaemon = new AutovacuumDaemon();
 
         VacuumResponse mockResponse = new VacuumResponse();
@@ -225,6 +230,7 @@ public class VacuumTest {
         }
         
         Assert.assertEquals(4L, partition.getLastSuccVacuumVersion());
+        Assert.assertEquals(5L, partition.getMetadataSwitchVersion());
     }
 
     @Test
@@ -236,8 +242,11 @@ public class VacuumTest {
         AutovacuumDaemon autovacuumDaemon = new AutovacuumDaemon();
         long current = System.currentTimeMillis();
         // static
-        partition.setVisibleVersion(1L, current - Config.lake_autovacuum_stale_partition_threshold * 3600 * 1000);
+        partition.setVisibleVersion(10L, current - Config.lake_autovacuum_stale_partition_threshold * 3600 * 1000);
         Assert.assertFalse(autovacuumDaemon.shouldVacuum(partition));
+        // metaSwitchVersion is not 0
+        partition.setMetadataSwitchVersion(5);
+        Assert.assertTrue(autovacuumDaemon.shouldVacuum(partition));
         // empty
         partition.setVisibleVersion(1L, current);
         Assert.assertFalse(autovacuumDaemon.shouldVacuum(partition));

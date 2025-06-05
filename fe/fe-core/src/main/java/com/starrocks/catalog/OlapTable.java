@@ -90,7 +90,6 @@ import com.starrocks.common.util.Util;
 import com.starrocks.common.util.WriteQuorum;
 import com.starrocks.common.util.concurrent.MarkedCountDownLatch;
 import com.starrocks.lake.DataCacheInfo;
-import com.starrocks.lake.LakeTableHelper;
 import com.starrocks.lake.StarOSAgent;
 import com.starrocks.lake.StorageInfo;
 import com.starrocks.persist.ColocatePersistInfo;
@@ -447,14 +446,6 @@ public class OlapTable extends Table {
             olapTable.curBinlogConfig = new BinlogConfig(this.curBinlogConfig);
         }
         olapTable.dbName = this.dbName;
-    }
-
-    protected void restoreColumnUniqueIdIfNeed() {
-        boolean needRestoreColumnUniqueId = (indexIdToMeta.values().stream().findFirst().
-                get().getSchema().get(0).getUniqueId() < 0);
-        if (needRestoreColumnUniqueId) {
-            setMaxColUniqueId(LakeTableHelper.restoreColumnUniqueId(this));
-        }
     }
 
     public void addDoubleWritePartition(long sourcePartitionId, long tempPartitionId) {
@@ -2495,9 +2486,9 @@ public class OlapTable extends Table {
         tableProperty.buildInMemory();
     }
 
-    public Boolean enablePartitionAggregation() {
+    public Boolean isFileBundling() {
         if (tableProperty != null) {
-            return tableProperty.enablePartitionAggregation();
+            return tableProperty.isFileBundling();
         }
         return false;
     }
@@ -2789,13 +2780,13 @@ public class OlapTable extends Table {
         tableProperty.buildDataCachePartitionDuration();
     }
 
-    public void setEnablePartitionAggregation(boolean enablePartitionAggregation) {
+    public void setFileBundling(boolean fileBundling) {
         if (tableProperty == null) {
             tableProperty = new TableProperty(new HashMap<>());
         }
-        tableProperty.modifyTableProperties(PropertyAnalyzer.PROPERTIES_ENABLE_PARTITION_AGGREGATION,
-                        Boolean.valueOf(enablePartitionAggregation).toString());
-        tableProperty.buildEnablePartitionAggregation();
+        tableProperty.modifyTableProperties(PropertyAnalyzer.PROPERTIES_FILE_BUNDLING,
+                        Boolean.valueOf(fileBundling).toString());
+        tableProperty.buildFileBundling();
     }
 
     public void setStorageCoolDownTTL(PeriodDuration duration) {
@@ -3477,8 +3468,8 @@ public class OlapTable extends Table {
             }
         }
 
-        if (enablePartitionAggregation()) {
-            properties.put(PropertyAnalyzer.PROPERTIES_ENABLE_PARTITION_AGGREGATION, enablePartitionAggregation().toString());
+        if (isFileBundling()) {
+            properties.put(PropertyAnalyzer.PROPERTIES_FILE_BUNDLING, isFileBundling().toString());
         }
 
         Map<String, String> tableProperties = tableProperty != null ? tableProperty.getProperties() : Maps.newLinkedHashMap();
@@ -3817,5 +3808,16 @@ public class OlapTable extends Table {
             return listMap.entrySet().stream().collect(Collectors.toMap(x -> x.getKey(), x -> x.getValue()));
         }
         return null;
+    }
+
+    public boolean allowUpdateFileBundling() {
+        for (Partition partition : getPartitions()) {
+            for (PhysicalPartition physicalPartition : partition.getSubPartitions()) {
+                if (physicalPartition.getMetadataSwitchVersion() != 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

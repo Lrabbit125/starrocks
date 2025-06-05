@@ -243,6 +243,10 @@ struct TColumn {
 struct TOlapTableIndexTablets {
     1: required i64 index_id
     2: required list<i64> tablets
+
+    // Virtual buckets. There is a tablet id for each virtual bucket,
+    // which means this virtual bucket's data is stored in this tablet.
+    3: optional list<i64> virtual_buckets
 }
 
 // its a closed-open range
@@ -252,8 +256,8 @@ struct TOlapTablePartition {
     2: optional Exprs.TExprNode start_key
     3: optional Exprs.TExprNode end_key
 
-    // how many tablets in one partition
-    4: required i32 num_buckets
+    // Deprecated, different indexes could have different buckets
+    4: optional i32 deprecated_num_buckets = 0
 
     5: required list<TOlapTableIndexTablets> indexes
 
@@ -514,6 +518,13 @@ struct TCompressedPartitionMap {
     3: optional string compressed_serialized_partitions
 }
 
+struct TIcebergPartitionInfo {
+    1: optional string source_column_name
+    2: optional string partition_column_name
+    3: optional string transform_expr
+    4: optional Exprs.TExpr partition_expr
+}
+
 struct TIcebergTable {
     // table location
     1: optional string location
@@ -525,7 +536,7 @@ struct TIcebergTable {
     3: optional TIcebergSchema iceberg_schema
 
     // partition column names
-    4: optional list<string> partition_column_names
+    4: optional list<string> partition_column_names //Deprecated, move to TIcebergPartitionInfo
 
     // partition map may be very big, serialize costs too much, just use serialized byte[]
     5: optional TCompressedPartitionMap compressed_partitions
@@ -535,6 +546,8 @@ struct TIcebergTable {
 
     // Iceberg equality delete schema, used to support schema evolution
     7: optional TIcebergSchema iceberg_equal_delete_schema
+
+    8: optional list<TIcebergPartitionInfo> partition_info
 }
 
 struct THudiTable {

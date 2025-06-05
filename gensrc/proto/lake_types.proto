@@ -109,6 +109,7 @@ message RowsetMetadataPB {
     // set in partial compaction, indicate which segment index next compaction should start from
     // only be set > 0 if `overlapped` is true
     optional uint32 next_compaction_offset = 13;
+    repeated int64 bundle_file_offsets = 14;
 }
 
 // At present, the lake persistent index reuses the logic of the persistent index,
@@ -162,6 +163,7 @@ message MetadataUpdateInfoPB {
     optional bool enable_persistent_index = 1;
     optional TabletSchemaPB tablet_schema = 2;
     optional PersistentIndexTypePB persistent_index_type = 3;
+    optional bool aggregate_tablet_metadata = 4;
 }
 
 message SharedTabletMetadataPB {

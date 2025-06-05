@@ -218,6 +218,7 @@ import com.starrocks.sql.optimizer.statistics.CachedStatisticStorage;
 import com.starrocks.sql.optimizer.statistics.StatisticStorage;
 import com.starrocks.sql.parser.AstBuilder;
 import com.starrocks.sql.parser.SqlParser;
+import com.starrocks.sql.spm.SPMAutoCapturer;
 import com.starrocks.sql.spm.SQLPlanStorage;
 import com.starrocks.staros.StarMgrServer;
 import com.starrocks.statistic.AnalyzeMgr;
@@ -245,6 +246,7 @@ import com.starrocks.transaction.GlobalTransactionMgr;
 import com.starrocks.transaction.GtidGenerator;
 import com.starrocks.transaction.PublishVersionDaemon;
 import com.starrocks.warehouse.WarehouseIdleChecker;
+import com.starrocks.warehouse.cngroup.ComputeResource;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -528,6 +530,7 @@ public class GlobalStateMgr {
     private final TabletCollector tabletCollector;
     private final SQLPlanStorage sqlPlanStorage;
     private final QueryHistoryMgr queryHistoryMgr;
+    private final SPMAutoCapturer spmAutoCapturer;
 
     private JwkMgr jwkMgr;
 
@@ -539,10 +542,11 @@ public class GlobalStateMgr {
         return journalObservable;
     }
 
-    public TNodesInfo createNodesInfo(long warehouseId, SystemInfoService systemInfoService) {
+    public TNodesInfo createNodesInfo(ComputeResource computeResource, SystemInfoService systemInfoService) {
         TNodesInfo nodesInfo = new TNodesInfo();
         if (RunMode.isSharedDataMode()) {
-            List<Long> computeNodeIds = warehouseMgr.getAllComputeNodeIds(warehouseId);
+            final WarehouseManager warehouseManager = GlobalStateMgr.getCurrentState().getWarehouseMgr();
+            final List<Long> computeNodeIds = warehouseManager.getAllComputeNodeIds(computeResource);
             for (Long cnId : computeNodeIds) {
                 ComputeNode cn = systemInfoService.getBackendOrComputeNode(cnId);
                 nodesInfo.addToNodes(new TNodeInfo(cnId, 0, cn.getIP(), cn.getBrpcPort()));
@@ -680,6 +684,7 @@ public class GlobalStateMgr {
         this.statisticStorage = new CachedStatisticStorage();
         this.sqlPlanStorage = SQLPlanStorage.create(true);
         this.queryHistoryMgr = new QueryHistoryMgr();
+        this.spmAutoCapturer = new SPMAutoCapturer();
 
         this.replayedJournalId = new AtomicLong(0L);
         this.synchronizedTimeMs = 0;
@@ -1419,6 +1424,7 @@ public class GlobalStateMgr {
         pipeListener.start();
         pipeScheduler.start();
         mvActiveChecker.start();
+        spmAutoCapturer.start();
 
         // start daemon thread to report the progress of RunningTaskRun to the follower by editlog
         taskRunStateSynchronizer = new TaskRunStateSynchronizer();
@@ -2658,7 +2664,7 @@ public class GlobalStateMgr {
             LOG.warn("task manager clean expire tasks failed", t);
         }
         try {
-            taskManager.removeExpiredTaskRuns();
+            taskManager.removeExpiredTaskRuns(false);
         } catch (Throwable t) {
             LOG.warn("task manager clean expire task runs history failed", t);
         }
@@ -2671,7 +2677,7 @@ public class GlobalStateMgr {
             LOG.warn("task manager clean expire tasks failed", t);
         }
         try {
-            taskManager.removeExpiredTaskRuns();
+            taskManager.removeExpiredTaskRuns(true);
         } catch (Throwable t) {
             LOG.warn("task manager clean expire task runs history failed", t);
         }

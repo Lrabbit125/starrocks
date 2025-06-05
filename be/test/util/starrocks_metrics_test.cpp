@@ -37,8 +37,8 @@
 #include <gtest/gtest.h>
 
 #include "cache/datacache.h"
+#include "cache/object_cache/page_cache.h"
 #include "common/config.h"
-#include "storage/page_cache.h"
 #include "testutil/assert.h"
 #include "util/logging.h"
 
@@ -105,7 +105,6 @@ TEST_F(StarRocksMetricsTest, Normal) {
     auto instance = StarRocksMetrics::instance();
     auto metrics = instance->metrics();
     metrics->collect(&visitor);
-    LOG(INFO) << "\n" << visitor.to_string();
     // check metric
     {
         instance->fragment_requests_total.increment(12);
@@ -279,15 +278,18 @@ TEST_F(StarRocksMetricsTest, PageCacheMetrics) {
     ASSERT_TRUE(capacity_metric != nullptr);
     {
         {
-            StoragePageCache::CacheKey key("abc", 0);
+            std::string key("abc0");
             PageCacheHandle handle;
-            Slice data(new char[1024], 1024);
-            ASSERT_OK(_page_cache->insert(key, data, &handle, false));
+            auto data = std::make_unique<std::vector<uint8_t>>(1024);
+            ObjectCacheWriteOptions opts;
+            ASSERT_OK(_page_cache->insert(key, data.get(), opts, &handle));
             ASSERT_TRUE(_page_cache->lookup(key, &handle));
+            data.release();
         }
         for (int i = 0; i < 1024; i++) {
             PageCacheHandle handle;
-            StoragePageCache::CacheKey key(std::to_string(i), 0);
+            std::string key(std::to_string(i));
+            key.append("0");
             _page_cache->lookup(key, &handle);
         }
     }
