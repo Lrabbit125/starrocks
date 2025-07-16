@@ -176,7 +176,7 @@ public abstract class LoadJob extends AbstractTxnStateChangeCallback implements 
 
     @SerializedName("warehouseId")
     protected long warehouseId = WarehouseManager.DEFAULT_WAREHOUSE_ID;
-    // no needs to persistent
+    @SerializedName("computeResource")
     protected ComputeResource computeResource = WarehouseManager.DEFAULT_RESOURCE;
 
     @SerializedName("mc")
@@ -1056,8 +1056,13 @@ public abstract class LoadJob extends AbstractTxnStateChangeCallback implements 
             info.setNum_scan_bytes(loadingStatus.getLoadStatistic().sourceScanBytes());
             // warehouse
             if (RunMode.getCurrentRunMode() == RunMode.SHARED_DATA) {
-                Warehouse warehouse = GlobalStateMgr.getCurrentState().getWarehouseMgr().getWarehouse(warehouseId);
-                info.setWarehouse(warehouse.getName());
+                try {
+                    Warehouse warehouse = GlobalStateMgr.getCurrentState().getWarehouseMgr().getWarehouse(warehouseId);
+                    info.setWarehouse(warehouse.getName());
+                } catch (Exception e) {
+                    LOG.warn("Failed to get warehouse for job {}, error: {}", id, e.getMessage());
+                    info.setWarehouse("");
+                }
             } else {
                 info.setWarehouse("");
             }
@@ -1220,7 +1225,7 @@ public abstract class LoadJob extends AbstractTxnStateChangeCallback implements 
     }
 
     @Override
-    public void onTaskFailed(long taskId, FailMsg failMsg) {
+    public void onTaskFailed(long taskId, FailMsg failMsg, TaskAttachment attachment) {
     }
 
     // This analyze will be invoked after the replay is finished.

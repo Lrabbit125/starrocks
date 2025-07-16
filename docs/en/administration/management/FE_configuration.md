@@ -688,7 +688,7 @@ ADMIN SET FRONTEND CONFIG ("key" = "value");
 
 ##### mysql_server_version
 
-- Default: 5.1.0
+- Default: 8.0.33
 - Type: String
 - Unit: -
 - Is mutable: Yes
@@ -1507,6 +1507,24 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Description: The maximum number of times that the optimizer can rewrite a scalar operator.
 - Introduced in: -
 
+##### max_scalar_operator_optimize_depth
+
+- Default：256
+- Type：Int
+- Unit：-
+- Is mutable: Yes
+- Description: The maximum depth that ScalarOperator optimization can be applied.
+- Introduced in: -
+
+##### max_scalar_operator_flat_children
+
+- Default：10000
+- Type：Int
+- Unit：-
+- Is mutable: Yes
+- Description：The maximum number of flat children for ScalarOperator. You can set this limit to prevent the optimizer from using too much memory.
+- Introduced in: -
+
 ##### enable_statistic_collect
 
 - Default: true
@@ -2254,6 +2272,24 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Description: Routine Load job is set to the UNSTABLE state if any task within the Routine Load job lags. To be specific, the difference between the timestamp of the message being consumed and the current time exceeds this threshold, and unconsumed messages exist in the data source.
 - Introduced in: -
 
+##### enable_routine_load_lag_metrics
+
+- Default: false
+- Type: Boolean
+- Unit: -
+- Is mutable: Yes
+- Description: Whether to collect Routine Load Kafka partition offset lag metrics. Please note that set this item to `true` will call the Kafka API to get the partition's latest offset.
+- Introduced in: -
+
+##### min_routine_load_lag_for_metrics
+
+- Default: 10000
+- Type: INT
+- Unit: -
+- Is mutable: Yes
+- Description: The minimum offset lag of Routine Load jobs to be shown in monitoring metrics. Routine Load jobs whose offset lags are greater than this value will be displayed in the metrics.
+- Introduced in: -
+
 ##### max_tolerable_backend_down_num
 
 - Default: 0
@@ -2899,27 +2935,6 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 
 - Introduced in: -
 
-<!--
-##### shard_group_clean_threshold_sec
-
-- Default: 3600
-- Type: Long
-- Unit: Seconds
-- Is mutable: No
-- Description:
-- Introduced in: -
--->
-
-<!--
-##### star_mgr_meta_sync_interval_sec
-
-- Default: 600
-- Type: Long
-- Unit: Seconds
-- Is mutable: No
-- Description:
-- Introduced in: -
--->
 
 ##### cloud_native_meta_port
 
@@ -2947,7 +2962,7 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Type: String
 - Unit: -
 - Is mutable: No
-- Description: The type of object storage you use. In shared-data mode, StarRocks supports storing data in HDFS, Azure Blob (supported from v3.1.1 onwards), Azure Data Lake Storage Gen2 (supported from v3.4.1 onwards), and object storages that are compatible with the S3 protocol (such as AWS S3, Google GCP, and MinIO). Valid value: `S3` (Default), `HDFS`, `AZBLOB`, and `ADLS2`. If you specify this parameter as `S3`, you must add the parameters prefixed by `aws_s3`. If you specify this parameter as `AZBLOB`, you must add the parameters prefixed by `azure_blob`. If you specify this parameter as `ADLS2`, you must add the parameters prefixed by `azure_adls2`. If you specify this parameter as `HDFS`, you only need to specify `cloud_native_hdfs_url`.
+- Description: The type of object storage you use. In shared-data mode, StarRocks supports storing data in HDFS, Azure Blob (supported from v3.1.1 onwards), Azure Data Lake Storage Gen2 (supported from v3.4.1 onwards), Google Storage (with native SDK, supported from v3.5.1 onwards), and object storage systems that are compatible with the S3 protocol (such as AWS S3, and MinIO). Valid value: `S3` (Default), `HDFS`, `AZBLOB`, `ADLS2`, and `GS`. If you specify this parameter as `S3`, you must add the parameters prefixed by `aws_s3`. If you specify this parameter as `AZBLOB`, you must add the parameters prefixed by `azure_blob`. If you specify this parameter as `ADLS2`, you must add the parameters prefixed by `azure_adls2`. If you specify this parameter as `GS`, you must add the parameters prefixed by `gcp_gcs`. If you specify this parameter as `HDFS`, you only need to specify `cloud_native_hdfs_url`.
 - Introduced in: -
 
 ##### cloud_native_hdfs_url
@@ -3115,6 +3130,96 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Is mutable: No
 - Description: The shared access signatures (SAS) used to authorize requests for your Azure Data Lake Storage Gen2.
 - Introduced in: v3.4.1
+
+##### azure_adls2_oauth2_use_managed_identity
+
+- Default: false
+- Type: Boolean
+- Unit: -
+- Is mutable: No
+- Description: Whether to use Managed Identity to authorize requests for your Azure Data Lake Storage Gen2.
+- Introduced in: v3.4.4
+
+##### azure_adls2_oauth2_tenant_id
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Tenant ID of the Managed Identity used to authorize requests for your Azure Data Lake Storage Gen2.
+- Introduced in: v3.4.4
+
+##### azure_adls2_oauth2_client_id
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Client ID of the Managed Identity used to authorize requests for your Azure Data Lake Storage Gen2.
+- Introduced in: v3.4.4
+
+##### azure_use_native_sdk
+
+- Default: true
+- Type: Boolean
+- Unit: -
+- Is mutable: Yes
+- Description: Whether to use the native SDK to access Azure Blob Storage, thus allowing authentication with Managed Identities and Service Principals. If this item is set to `false`, only authentication with Shared Key and SAS Token is allowed.
+- Introduced in: v3.4.4
+
+##### gcp_gcs_path
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Google Cloud path used to store data. It consists of the name of your Google Cloud bucket and the sub-path (if any) under it, for example, `testbucket/subpath`.
+- Introduced in: v3.5.1
+
+##### gcp_gcs_service_account_email
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The email address in the JSON file generated at the creation of the Service Account, for example, `user@hello.iam.gserviceaccount.com`.
+- Introduced in: v3.5.1
+
+##### gcp_gcs_service_account_private_key_id
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Private Key ID in the JSON file generated at the creation of the Service Account.
+- Introduced in: v3.5.1
+
+##### gcp_gcs_service_account_private_key
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Private Key in the JSON file generated at the creation of the Service Account, for example, `-----BEGIN PRIVATE KEY----xxxx-----END PRIVATE KEY-----\n`.
+- Introduced in: v3.5.1
+
+##### gcp_gcs_impersonation_service_account
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The Service Account that you want to impersonate if you use the impersonation-based authentication to access Google Storage.
+- Introduced in: v3.5.1
+
+##### gcp_gcs_use_compute_engine_service_account
+
+- Default: true
+- Type: Boolean
+- Unit: -
+- Is mutable: No
+- Description: Whether to use the Service Account that is bound to your Compute Engine.
+- Introduced in: v3.5.1
 
 <!--
 ##### starmgr_grpc_timeout_seconds
@@ -3286,6 +3391,15 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Description: The table or partition list of which compaction is disabled in shared-data mode. The format is `tableId1;partitionId2`, seperated by semicolon, for example, `12345;98765`.
 - Introduced in: v3.4.4
 
+##### lake_compaction_allow_partial_success
+
+- Default: true
+- Type: Boolean
+- Unit: -
+- Is mutable: Yes
+- Description: If this item is set to `true`, the system will consider the Compaction operation in a shared-data cluster as successful when one of the sub-tasks succeeds.
+- Introduced in: v3.5.2
+
 ##### lake_enable_balance_tablets_between_workers
 
 - Default: false
@@ -3303,6 +3417,33 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Is mutable: Yes
 - Description: The threshold the system used to judge the tablet balance among workers in a shared-data cluster, The imbalance factor is calculated as `f = (MAX(tablets) - MIN(tablets)) / AVERAGE(tablets)`. If the factor is greater than `lake_balance_tablets_threshold`, a tablet balance will be triggered. This item takes effect only when `lake_enable_balance_tablets_between_workers` is set to `true`.
 - Introduced in: v3.3.4
+
+##### shard_group_clean_threshold_sec
+
+- Default: 3600
+- Type: Long
+- Unit: Seconds
+- Is mutable: Yes
+- Description: The time before FE cleans the unused tablet and shard groups in a shared-data cluster. Tablets and shard groups created within this threshold will not be cleaned.
+- Introduced in: -
+
+##### star_mgr_meta_sync_interval_sec
+
+- Default: 600
+- Type: Long
+- Unit: Seconds
+- Is mutable: No
+- Description: The interval at which FE runs the periodical metadata synchronization with StarMgr in a shared-data cluster.
+- Introduced in: -
+
+##### meta_sync_force_delete_shard_meta
+
+- Default: false
+- Type: Boolean
+- Unit: -
+- Is mutable: Yes
+- Description: Whether to allow deleting the metadata of the shared-data cluster directly, bypassing cleaning the remote storage files. It is recommended to set this item to `true` only when there is an excessive number of shards to be cleaned, which leads to extreme memory pressure on the FE JVM. Note that the data files belonging to the shards or tablets cannot be automatically cleaned after this feature is enabled.
+- Introduced in: v3.2.10, v3.3.3
 
 ### Other
 
@@ -3740,6 +3881,123 @@ Starting from version 3.3.0, the system defaults to refreshing one partition at 
 - Is mutable: Yes
 - Description: The password of the administrator used to search for users' authentication information.
 - Introduced in: -
+
+##### jwt_jwks_url
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The URL to the JSON Web Key Set (JWKS) service or the path to the public key local file under the `fe/conf` directory.
+- Introduced in: v3.5.0
+
+##### jwt_principal_field
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The string used to identify the field that indicates the subject (`sub`) in the JWT. The default value is `sub`. The value of this field must be identical with the username for logging in to StarRocks.
+- Introduced in: v3.5.0
+
+##### jwt_required_issuer
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The list of strings used to identify the issuers (`iss`) in the JWT. The JWT is considered valid only if one of the values in the list match the JWT issuer.
+- Introduced in: v3.5.0
+
+##### jwt_required_audience
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The list of strings used to identify the audience (`aud`) in the JWT. The JWT is considered valid only if one of the values in the list match the JWT audience.
+- Introduced in: v3.5.0
+
+##### oauth2_auth_server_url
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The authorization URL. The URL to which the users’ browser will be redirected in order to begin the OAuth 2.0 authorization process.
+- Introduced in: v3.5.0
+
+##### oauth2_token_server_url
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The URL of the endpoint on the authorization server from which StarRocks obtains the access token.
+- Introduced in: v3.5.0
+
+##### oauth2_client_id
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The public identifier of the StarRocks client.
+- Introduced in: v3.5.0
+
+##### oauth2_client_secret
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The secret used to authorize StarRocks client with the authorization server.
+- Introduced in: v3.5.0
+
+##### oauth2_redirect_url
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The URL to which the users’ browser will be redirected after the OAuth 2.0 authentication succeeds. The authorization code will be sent to this URL. In most cases, it need to be configured as `http://<starrocks_fe_url>:<fe_http_port>/api/oauth2`.
+- Introduced in: v3.5.0
+
+##### oauth2_jwks_url
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The URL to the JSON Web Key Set (JWKS) service or the path to the local file under the `conf` directory.
+- Introduced in: v3.5.0
+
+##### oauth2_principal_field
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The string used to identify the field that indicates the subject (`sub`) in the JWT. The default value is `sub`. The value of this field must be identical with the username for logging in to StarRocks.
+- Introduced in: v3.5.0
+
+##### oauth2_required_issuer
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The list of strings used to identify the issuers (`iss`) in the JWT. The JWT is considered valid only if one of the values in the list match the JWT issuer.
+- Introduced in: v3.5.0
+
+##### oauth2_required_audience
+
+- Default: Empty string
+- Type: String
+- Unit: -
+- Is mutable: No
+- Description: The list of strings used to identify the audience (`aud`) in the JWT. The JWT is considered valid only if one of the values in the list match the JWT audience.
+- Introduced in: v3.5.0
 
 <!--
 ##### enable_token_check

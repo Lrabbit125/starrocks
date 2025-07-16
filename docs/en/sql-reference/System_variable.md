@@ -114,13 +114,13 @@ SELECT /*+ SET_VAR(query_mem_limit = 8589934592) */ name FROM people ORDER BY na
 
 SELECT /*+ SET_VAR(query_timeout = 1) */ sleep(3);
 
-UPDATE /*+ SET_VAR(query_timeout=100) */ tbl SET c1 = 2 WHERE c1 = 1;
+UPDATE /*+ SET_VAR(insert_timeout=100) */ tbl SET c1 = 2 WHERE c1 = 1;
 
 DELETE /*+ SET_VAR(query_mem_limit = 8589934592) */
 FROM my_table PARTITION p1
 WHERE k1 = 3;
 
-INSERT /*+ SET_VAR(query_timeout = 10000000) */
+INSERT /*+ SET_VAR(insert_timeout = 10000000) */
 INTO insert_wiki_edit
     SELECT * FROM FILES(
         "path" = "s3://inserttest/parquet/insert_wiki_edit_append.parquet",
@@ -228,6 +228,13 @@ Used for MySQL client compatibility. No practical usage.
 * **Default**: false
 * **Data type**: Int
 * **Introduced in**: v3.3.0
+
+### custom_query_id (session)
+
+* **Description**: Used to bind some external identifier to a current query. Can be set using `SET SESSION custom_query_id = 'my-query-id';` before executing a query. The value is reset after query is finished. This value can be passed to `KILL QUERY 'my-query-id'`. Value can be found in audit logs as a `customQueryId` field.
+* **Default**: ""
+* **Data type**: String
+* **Introduced in**: v3.4.0
 
 ### enable_sync_materialized_view_rewrite
 
@@ -596,7 +603,7 @@ Default value: `true`.
 ### enable_scan_datacache
 
 * **Description**: Specifies whether to enable the Data Cache feature. After this feature is enabled, StarRocks caches hot data read from external storage systems into blocks, which accelerates queries and analysis. For more information, see [Data Cache](../data_source/data_cache.md). In versions prior to 3.2, this variable was named as `enable_scan_block_cache`.
-* **Default**: false
+* **Default**: true 
 * **Introduced in**: v2.5
 
 ### populate_datacache_mode
@@ -990,7 +997,7 @@ Used for compatibility with JDBC connection pool C3P0. No practical use.
 
 ### query_timeout
 
-* **Description**: Used to set the query timeout in "seconds". This variable will act on all query statements in the current connection. The default value is 300 seconds. From v3.4.0 onwards, `query_timeout` does not apply to INSERT statements.
+* **Description**: Used to set the query timeout in "seconds". This variable will act on all query statements in the current connection. The default value is 300 seconds. From v3.4.0 onwards, `query_timeout` does not apply to operations involved INSERT (for example, UPDATE, DELETE, CTAS, materialized view refresh, statistics collection, and PIPE).
 * **Value range**: [1, 259200]
 * **Default**: 300
 * **Data type**: Int

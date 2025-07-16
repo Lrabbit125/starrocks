@@ -50,6 +50,9 @@ ldap_info ::=
     "ldap_bind_base_dn" = "",
     ["ldap_conn_timeout" = "",]
     ["ldap_conn_read_timeout" = ""]
+    ["ldap_ssl_conn_allow_insecure" = ""]
+    ["ldap_ssl_conn_trust_store_path" = ""]
+    ["ldap_ssl_conn_trust_store_pwd" = ""]
 
 ldap_search_group_arg ::= 
     { "ldap_group_dn" = "" 
@@ -113,6 +116,18 @@ PROPERTIES (
 ##### `ldap_conn_read_timeout`
 
 可选。连接到您的 LDAP 服务的读取操作的超时时间。
+
+##### `ldap_ssl_conn_allow_insecure`
+
+可选。是否允许使用非加密方式连接到 LDAP 服务器。默认值：`true`。将此值设置为 `false` 表示访问 LDAP 需要使用 SSL 加密。
+
+##### `ldap_ssl_conn_trust_store_path`
+
+可选。存储 LDAP 服务器的 SSL CA 证书的本地路径。支持 pem 和 jks 格式。如果证书是由受信机构颁发的，则无需配置。
+
+##### `ldap_ssl_conn_trust_store_pwd`
+
+可选。访问本地存储的 LDAP 服务器的 SSL CA 证书所用的密码。pem 格式证书不需要密码，只有 jsk 格式证书需要。
 
 #### `ldap_search_group_arg`
 
@@ -216,7 +231,7 @@ PROPERTIES(
 ALTER SECURITY INTEGRATION <security_integration_name> SET
 (
     "group_provider" = "",
-    "authenticated_group_list" = ""
+    "permitted_groups" = ""
 )
 ```
 
@@ -226,7 +241,7 @@ ALTER SECURITY INTEGRATION <security_integration_name> SET
 
 要与安全集成结合的 Group Provider 名称。多个 Group Provider 用逗号分隔。一旦设置，StarRocks 将在用户登录时记录每个指定提供者下的用户组信息。
 
-#### `authenticated_group_list`
+#### `permitted_groups`
 
 可选。允许其成员登录到 StarRocks 的组名称。多个组用逗号分隔。确保指定的组可以通过组合的 Group Provider 检索到。
 
@@ -234,9 +249,9 @@ ALTER SECURITY INTEGRATION <security_integration_name> SET
 
 ```SQL
 ALTER SECURITY INTEGRATION LDAP SET
-PROPERTIES(
+(
         "group_provider"="ldap_group_provider",
-        "authenticated_group_list"="testgroup"
+        "permitted_groups"="testgroup"
 );
 ```
 

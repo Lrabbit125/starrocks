@@ -838,19 +838,26 @@ public class IcebergMetadata implements ConnectorMetadata {
         }
 
         IcebergTable icebergTable = (IcebergTable) table;
-        List<ScalarOperator> scalarOperators = Utils.extractConjuncts(params.getPredicate());
-        ScalarOperatorToIcebergExpr.IcebergContext icebergContext = new ScalarOperatorToIcebergExpr.IcebergContext(
-                icebergTable.getNativeTable().schema().asStruct());
-        Expression icebergPredicate = new ScalarOperatorToIcebergExpr().convert(scalarOperators, icebergContext);
-        RemoteFileInfoSource baseSource = buildRemoteInfoSource(icebergTable, icebergPredicate, snapshotId.get());
+
+        String dbName = table.getCatalogDBName();
+        String tableName = table.getCatalogTableName();
+        PredicateSearchKey predicateSearchKey = PredicateSearchKey.of(dbName, tableName, snapshotId.get(), param.getPredicate());
+        RemoteFileInfoSource baseSource;
+        if (splitTasks.containsKey(predicateSearchKey)) {
+            baseSource = buildRemoteInfoSource(splitTasks.get(predicateSearchKey));
+        } else {
+            List<ScalarOperator> scalarOperators = Utils.extractConjuncts(params.getPredicate());
+            ScalarOperatorToIcebergExpr.IcebergContext icebergContext = new ScalarOperatorToIcebergExpr.IcebergContext(
+                    icebergTable.getNativeTable().schema().asStruct());
+            Expression icebergPredicate = new ScalarOperatorToIcebergExpr().convert(scalarOperators, icebergContext);
+            baseSource = buildRemoteInfoSource(icebergTable, icebergPredicate, snapshotId.get(), params);
+        }
 
         IcebergTableMORParams tableFullMORParams = param.getTableFullMORParams();
         if (tableFullMORParams.isEmpty()) {
             return baseSource;
         } else {
             // build remote file info source for table with equality delete files.
-            String dbName = icebergTable.getCatalogDBName();
-            String tableName = icebergTable.getCatalogTableName();
             IcebergRemoteFileInfoSourceKey remoteFileInfoSourceKey = IcebergRemoteFileInfoSourceKey.of(
                     dbName, tableName, snapshotId.get(), param.getPredicate(), tableFullMORParams.getMORId(),
                     param.getMORParams());
@@ -875,9 +882,26 @@ public class IcebergMetadata implements ConnectorMetadata {
 
     private RemoteFileInfoSource buildRemoteInfoSource(IcebergTable table,
                                                        Expression icebergPredicate,
-                                                       Long snapshotId) {
+                                                       Long snapshotId,
+                                                       GetRemoteFilesParams params) {
         Iterator<FileScanTask> iterator =
-                buildFileScanTaskIterator(table, icebergPredicate, snapshotId, ConnectContext.get(), false);
+                buildFileScanTaskIterator(table, icebergPredicate, snapshotId, ConnectContext.get(),
+                        params.isEnableColumnStats());
+        return new RemoteFileInfoSource() {
+            @Override
+            public RemoteFileInfo getOutput() {
+                return new IcebergRemoteFileInfo(iterator.next());
+            }
+
+            @Override
+            public boolean hasMoreOutput() {
+                return iterator.hasNext();
+            }
+        };
+    }
+
+    private RemoteFileInfoSource buildRemoteInfoSource(List<FileScanTask> tasks) {
+        Iterator<FileScanTask> iterator = tasks.iterator();
         return new RemoteFileInfoSource() {
             @Override
             public RemoteFileInfo getOutput() {
@@ -1236,13 +1260,14 @@ public class IcebergMetadata implements ConnectorMetadata {
         return isOverwrite ? new DynamicOverwrite(transaction) : new Append(transaction);
     }
 
-    public PartitionData partitionDataFromPath(String relativePartitionPath, 
-            String partitionNullFingerprint, PartitionSpec spec, org.apache.iceberg.Table table) {
+    public PartitionData partitionDataFromPath(String relativePartitionPath,
+                                               String partitionNullFingerprint, PartitionSpec spec,
+                                               org.apache.iceberg.Table table) {
         PartitionData data = new PartitionData(spec.fields().size());
         String[] partitions = relativePartitionPath.split("/", -1);
         List<PartitionField> partitionFields = spec.fields();
         if (partitions.length != partitionNullFingerprint.length()) {
-            throw new InternalError("Invalid partition and fingerprint size, partition:" + relativePartitionPath + 
+            throw new InternalError("Invalid partition and fingerprint size, partition:" + relativePartitionPath +
                     " partition size:" + String.valueOf(partitions.length) + " fingerprint:" + partitionNullFingerprint);
         }
         for (int i = 0; i < partitions.length; i++) {
@@ -1259,7 +1284,7 @@ public class IcebergMetadata implements ConnectorMetadata {
             if (partitionNullFingerprint.charAt(i) == '0') { //'0' means not null, '1' means null
                 // apply date decoding for date type
                 String transform = field.transform().toString();
-                if (transform.equals("year") || transform.equals("month") 
+                if (transform.equals("year") || transform.equals("month")
                         || transform.equals("day") || transform.equals("hour")) {
                     Integer year = org.apache.iceberg.util.DateTimeUtil.EPOCH.getYear();
                     Integer month = org.apache.iceberg.util.DateTimeUtil.EPOCH.getMonthValue();

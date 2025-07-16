@@ -375,6 +375,7 @@ public class FunctionSet {
 
     // Hash functions:
     public static final String MURMUR_HASH3_32 = "murmur_hash3_32";
+    public static final String CRC32_HASH = "crc32_hash";
 
     // Percentile functions:
     public static final String PERCENTILE_APPROX_RAW = "percentile_approx_raw";
@@ -548,6 +549,9 @@ public class FunctionSet {
     public static final String AGG_STATE_MERGE_SUFFIX = "_merge";
     public static final String AGG_STATE_IF_SUFFIX = "_if";
 
+    public static final String BOOL_OR = "bool_or";
+    public static final String BOOLOR_AGG = "boolor_agg";
+
     private static final Logger LOGGER = LogManager.getLogger(FunctionSet.class);
 
     private static final Set<Type> STDDEV_ARG_TYPE =
@@ -642,6 +646,7 @@ public class FunctionSet {
                     .add(FunctionSet.EXCHANGE_BYTES)
                     .add(FunctionSet.EXCHANGE_SPEED)
                     .add(FunctionSet.FIELD)
+                    .add(FunctionSet.SPLIT_PART)
                     .build();
 
     public static final Set<String> DECIMAL_ROUND_FUNCTIONS =
@@ -876,6 +881,7 @@ public class FunctionSet {
         TableFunction.initBuiltins(this);
         VectorizedBuiltinFunctions.initBuiltins(this);
         initAggregateBuiltins();
+        addBooleanAggregateFunctions();
     }
 
     public boolean isNotAlwaysNullResultWithNullParamFunctions(String funcName) {
@@ -1174,7 +1180,7 @@ public class FunctionSet {
                     true, false, true));
         }
 
-        // MULTI_DISTINCT_COUNTM
+        // MULTI_DISTINCT_COUNT
         for (Type type : MULTI_DISTINCT_COUNT_TYPES) {
             addBuiltin(AggregateFunction.createBuiltin(FunctionSet.MULTI_DISTINCT_COUNT, Lists.newArrayList(type),
                     Type.BIGINT,
@@ -1381,8 +1387,15 @@ public class FunctionSet {
             }
         }
         for (ScalarType type : Type.DECIMAL_TYPES) {
+            Type retType;
+            // TODO(stephen): support auto scale up decimal precision
+            if (type.isDecimal256()) {
+                retType = Type.DECIMAL256;
+            } else {
+                retType = Type.DECIMAL128;
+            }
             addBuiltin(AggregateFunction.createBuiltin(name,
-                    Lists.newArrayList(type), Type.DECIMAL128, Type.DECIMAL128,
+                    Lists.newArrayList(type), retType, retType,
                     false, true, false));
         }
         addBuiltin(AggregateFunction.createBuiltin(name,
@@ -1407,8 +1420,15 @@ public class FunctionSet {
             }
         }
         for (ScalarType type : Type.DECIMAL_TYPES) {
+            Type retType = Type.DECIMAL128;
+            // TODO(stephen): support auto scale up decimal precision
+            if (type.isDecimal256()) {
+                retType = Type.DECIMAL256;
+            } else {
+                retType = Type.DECIMAL128;
+            }
             addBuiltin(AggregateFunction.createBuiltin(MULTI_DISTINCT_SUM,
-                    Lists.newArrayList(type), Type.DECIMAL128, Type.VARBINARY,
+                    Lists.newArrayList(type), retType, Type.VARBINARY,
                     false, true, false));
         }
         addBuiltin(AggregateFunction.createBuiltin(MULTI_DISTINCT_SUM,
@@ -1501,8 +1521,15 @@ public class FunctionSet {
                     false, true, false));
         }
         for (ScalarType type : Type.DECIMAL_TYPES) {
+            Type retType;
+            // TODO(stephen): support auto scale up decimal precision
+            if (type.isDecimal256()) {
+                retType = Type.DECIMAL256;
+            } else {
+                retType = Type.DECIMAL128;
+            }
             addBuiltin(AggregateFunction.createBuiltin(AVG,
-                    Lists.newArrayList(type), Type.DECIMAL128, Type.VARBINARY,
+                    Lists.newArrayList(type), retType, Type.VARBINARY,
                     false, true, false));
         }
         addBuiltin(AggregateFunction.createBuiltin(AVG,
@@ -1633,5 +1660,14 @@ public class FunctionSet {
             builtinFunctions.addAll(entry.getValue());
         }
         return builtinFunctions;
+    }
+
+    // Boolean aggregate functions
+    private void addBooleanAggregateFunctions() {
+        // BOOL_OR: Returns true if any value in the expression is true
+        addBuiltin(AggregateFunction.createBuiltin(FunctionSet.BOOL_OR,
+                Lists.newArrayList(Type.BOOLEAN),
+                Type.BOOLEAN, Type.BOOLEAN,
+                false, true, false));
     }
 }

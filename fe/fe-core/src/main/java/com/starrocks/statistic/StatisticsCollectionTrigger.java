@@ -201,12 +201,13 @@ public class StatisticsCollectionTrigger {
                         StatisticsCollectJob job = StatisticsCollectJobFactory.buildStatisticsCollectJob(db, table,
                                 new ArrayList<>(partitionIds), null, null,
                                 analyzeType, StatsConstants.ScheduleType.ONCE,
-                                analyzeStatus.getProperties(), List.of(), List.of());
+                                analyzeStatus.getProperties(), List.of(), List.of(), false);
                         if (!partitionTabletRowCounts.isEmpty()) {
                             job.setPartitionTabletRowCounts(partitionTabletRowCounts);
                         }
 
-                        statisticExecutor.collectStatistics(statsConnectCtx, job, analyzeStatus, false);
+                        statisticExecutor.collectStatistics(statsConnectCtx, job, analyzeStatus, false,
+                                true /* resetWarehouse */);
                     });
         } catch (Throwable e) {
             LOG.error("failed to submit statistic collect job", e);

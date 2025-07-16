@@ -258,6 +258,11 @@ statement
     | delBackendBlackListStatement
     | showBackendBlackListStatement
 
+    // Compute Node BlackList
+    | addComputeNodeBlackListStatement
+    | delComputeNodeBlackListStatement
+    | showComputeNodeBlackListStatement
+
     // Data Cache management statement
     | createDataCacheRuleStatement
     | showDataCacheRulesStatement
@@ -674,7 +679,7 @@ taskClause
     ;
 
 dropTaskStatement
-    : DROP TASK qualifiedName FORCE?
+    : DROP TASK (IF EXISTS)? qualifiedName FORCE?
     ;
 
 taskScheduleDesc
@@ -956,6 +961,7 @@ alterClause
     | dropTagClause
     | tableOperationClause
     | dropPersistentIndexClause
+    | splitTabletClause
 
     //Alter partition clause
     | addPartitionClause
@@ -1197,6 +1203,12 @@ dropPersistentIndexClause
     : DROP PERSISTENT INDEX ON TABLETS integer_list
     ;
 
+splitTabletClause
+    : SPLIT
+      (((TABLET | TABLETS) partitionNames?) | tabletList)
+      properties?
+    ;
+
 // ---------Alter partition clause---------
 
 addPartitionClause
@@ -1380,7 +1392,7 @@ dropHistogramStatement
 createAnalyzeStatement
     : CREATE ANALYZE (FULL | SAMPLE)? ALL properties?
     | CREATE ANALYZE (FULL | SAMPLE)? DATABASE db=identifier properties?
-    | CREATE ANALYZE (FULL | SAMPLE)? TABLE qualifiedName ('(' qualifiedName (',' qualifiedName)* ')')? properties?
+    | CREATE ANALYZE (FULL | SAMPLE)? (IF NOT EXISTS)? TABLE qualifiedName ('(' qualifiedName (',' qualifiedName)* ')')? properties?
     | CREATE histogramStatement
     ;
 
@@ -1424,7 +1436,7 @@ dropBaselinePlanStatement
 
 showBaselinePlanStatement
     : SHOW BASELINE (WHERE expression)?
-
+    | SHOW BASELINE ON queryRelation
     ;
 
 disableBaselinePlanStatement
@@ -1443,7 +1455,7 @@ createResourceGroupStatement
     ;
 
 dropResourceGroupStatement
-    : DROP RESOURCE GROUP identifier
+    : DROP RESOURCE GROUP (IF EXISTS)? identifier
     ;
 
 alterResourceGroupStatement
@@ -1964,6 +1976,20 @@ showBackendBlackListStatement
     : SHOW BACKEND BLACKLIST
     ;
 
+// ------------------------------------ Compute Node BlackList Statement ---------------------------------------------------
+
+addComputeNodeBlackListStatement
+    : ADD COMPUTE NODE BLACKLIST INTEGER_VALUE (',' INTEGER_VALUE)*
+    ;
+
+delComputeNodeBlackListStatement
+    : DELETE COMPUTE NODE BLACKLIST INTEGER_VALUE (',' INTEGER_VALUE)*
+    ;
+
+showComputeNodeBlackListStatement
+    : SHOW COMPUTE NODE BLACKLIST
+    ;
+
 // -------------------------------------- DataCache Management Statement --------------------------------------------
 
 dataCacheTarget
@@ -2441,7 +2467,7 @@ columnAliases
 // partitionNames should not support string, it should be identifier here only for compatibility with historical bugs
 partitionNames
     : TEMPORARY? (PARTITION | PARTITIONS) '(' identifierOrString (',' identifierOrString)* ')'
-    | TEMPORARY? (PARTITION | PARTITIONS) identifierOrString
+    | TEMPORARY? (PARTITION | PARTITIONS) identifierOrString (',' identifierOrString)*
     | keyPartitions
     ;
 
@@ -2450,7 +2476,8 @@ keyPartitions
     ;
 
 tabletList
-    : TABLET '(' INTEGER_VALUE (',' INTEGER_VALUE)* ')'
+    : (TABLET | TABLETS) '(' INTEGER_VALUE (',' INTEGER_VALUE)* ')'
+    | (TABLET | TABLETS) INTEGER_VALUE (',' INTEGER_VALUE)*
     ;
 
 prepareStatement
@@ -3119,7 +3146,7 @@ nonReserved
     | REASON | REMOVE | REWRITE | RANDOM | RANK | RECOVER | REFRESH | REPAIR | REPEATABLE | REPLACE_IF_NOT_NULL | REPLICA | REPOSITORY
     | REPOSITORIES
     | RESOURCE | RESOURCES | RESTORE | RESUME | RETAIN | RETENTION | RETURNS | RETRY | REVERT | ROLE | ROLES | ROLLUP | ROLLBACK | ROUTINE | ROW | RUNNING | RULE | RULES
-    | SAMPLE | SCHEDULE | SCHEDULER | SECOND | SECURITY | SEPARATOR | SERIALIZABLE |SEMI | SESSION | SETS | SIGNED | SNAPSHOT | SNAPSHOTS | SQLBLACKLIST | START | STARROCKS
+    | SAMPLE | SCHEDULE | SCHEDULER | SECOND | SECURITY | SEPARATOR | SERIALIZABLE |SEMI | SESSION | SETS | SIGNED | SNAPSHOT | SNAPSHOTS | SPLIT | SQLBLACKLIST | START | STARROCKS
     | STREAM | SUM | STATUS | STOP | SKIP_HEADER | SWAP
     | STORAGE| STRING | STRUCT | STATS | SUBMIT | SUSPEND | SYNC | SYSTEM_TIME
     | TABLES | TABLET | TABLETS | TAG | TASK | TEMPORARY | TIMESTAMP | TIMESTAMPADD | TIMESTAMPDIFF | THAN | TIME | TIMES | TRANSACTION | TRACE | TRANSLATE

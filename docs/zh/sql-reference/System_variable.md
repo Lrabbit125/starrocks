@@ -111,13 +111,13 @@ SELECT /*+ SET_VAR(query_mem_limit = 8589934592) */ name FROM people ORDER BY na
 
 SELECT /*+ SET_VAR(query_timeout = 1) */ sleep(3);
 
-UPDATE /*+ SET_VAR(query_timeout=100) */ tbl SET c1 = 2 WHERE c1 = 1;
+UPDATE /*+ SET_VAR(insert_timeout=100) */ tbl SET c1 = 2 WHERE c1 = 1;
 
 DELETE /*+ SET_VAR(query_mem_limit = 8589934592) */
 FROM my_table PARTITION p1
 WHERE k1 = 3;
 
-INSERT /*+ SET_VAR(query_timeout = 10000000) */
+INSERT /*+ SET_VAR(insert_timeout = 10000000) */
 INTO insert_wiki_edit
     SELECT * FROM FILES(
         "path" = "s3://inserttest/parquet/insert_wiki_edit_append.parquet",
@@ -589,7 +589,7 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 ### enable_scan_datacache
 
 * 描述：是否开启 Data Cache 特性。该特性开启之后，StarRocks 通过将外部存储系统中的热数据缓存成多个 block，加速数据查询和分析。更多信息，参见 [Data Cache](../data_source/data_cache.md)。该特性从 2.5 版本开始支持。在 3.2 之前各版本中，对应变量为 `enable_scan_block_cache`。
-* 默认值：false
+* 默认值：true
 * 引入版本：v2.5
 
 ### populate_datacache_mode
@@ -1001,7 +1001,7 @@ ALTER USER 'jack' SET PROPERTIES ('session.query_timeout' = '600');
 
 ### query_timeout
 
-* 描述：用于设置查询超时时间，单位为秒。该变量会作用于当前连接中所有的查询语句。自 v3.4.0 起，`query_timeout` 不再作用于 INSERT 语句。
+* 描述：用于设置查询超时时间，单位为秒。该变量会作用于当前连接中所有的查询语句。从 v3.4.0 起，`query_timeout` 不再适用于涉及 INSERT 的操作（例如，UPDATE、DELETE、CTAS、物化视图刷新、统计数据收集和 PIPE）。
 * 默认值：300 （5 分钟）
 * 单位：秒
 * 类型：Int

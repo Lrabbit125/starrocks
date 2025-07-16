@@ -367,7 +367,10 @@ public class LakeTableSchemaChangeJob extends LakeTableSchemaChangeJobBase {
             OlapTable table = getTableOrThrow(db, tableId);
             Preconditions.checkState(table.getState() == OlapTable.OlapTableState.SCHEMA_CHANGE);
 
-            enableTabletCreationOptimization |= table.isFileBundling();
+            // disable tablet creation optimaization to avoid overwriting files with the same name.
+            if (table.isFileBundling()) {
+                enableTabletCreationOptimization = false;
+            }
             if (enableTabletCreationOptimization) {
                 numTablets = physicalPartitionIndexMap.size();
             } else {
@@ -440,6 +443,7 @@ public class LakeTableSchemaChangeJob extends LakeTableSchemaChangeJobBase {
                                 .setTabletSchema(tabletSchema)
                                 .setEnableTabletCreationOptimization(enableTabletCreationOptimization)
                                 .setGtid(gtid)
+                                .setCompactionStrategy(table.getCompactionStrategy())
                                 .build();
                         // For each partition, the schema file is created only when the first Tablet is created
                         createSchemaFile = false;

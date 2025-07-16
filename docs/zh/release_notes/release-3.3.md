@@ -10,6 +10,84 @@ displayed_sidebar: docs
 
 :::
 
+## 3.3.16
+
+发布日期：2025 年 7 月 4 日
+
+### 功能优化
+
+- 优化创建同名 Hive Table 时的错误日志。[#60076](https://github.com/StarRocks/starrocks/pull/60076)
+- 增加 FE 参数 `slow_lock_print_stack`，用于防止大规模集群中打印线程堆栈导致进程卡顿。[#59967](https://github.com/StarRocks/starrocks/pull/59967)
+- 减少 Tablet 调度时不必要的锁。[#59744](https://github.com/StarRocks/starrocks/pull/59744) 
+
+### 问题修复
+
+修复了如下问题：
+
+- SplitOR 未能裁剪 Scan 列。[#60223](https://github.com/StarRocks/starrocks/pull/60223)
+- Null 感知型的 Left Anti Join 查询规划错误的问题。[#60119](https://github.com/StarRocks/starrocks/pull/60119)
+- 物化视图改写查询时丢失 Null 分区的而导致的查询结果不正确问题。[#60087](https://github.com/StarRocks/starrocks/pull/60087)
+- 表包含空分区导致分区裁剪错误。[#60162](https://github.com/StarRocks/starrocks/pull/60162)
+- Iceberg 外表使用基于 `str2date` 函数的分区表达式时导致的刷新异常。[#60089](https://github.com/StarRocks/starrocks/pull/60089)
+- 物化视图 Schema Change 导致的预期外行为。[#60079](https://github.com/StarRocks/starrocks/pull/60079)
+- UNION 算子中低基数全局字典相关问题。[#60075](https://github.com/StarRocks/starrocks/pull/60075)
+- 使用 START END 方式创建的临时分区的分区范围不正确的问题。[#60014](https://github.com/StarRocks/starrocks/pull/60014)
+- SUBMIT TASK 的锁问题。[#60026](https://github.com/StarRocks/starrocks/pull/60026)
+- 主键表在特定情况下 Partial Update 失败。[#60052](https://github.com/StarRocks/starrocks/pull/60052)
+- BE 因为没有访问存储路径的权限，创建目录失败而导致的 Crash。[#60028](https://github.com/StarRocks/starrocks/pull/60028)
+- 并发场景下发生 Cache Key 重复，从而导致 Cache 失败。[#60053](https://github.com/StarRocks/starrocks/pull/60053)
+- Unified Catalog 中 Hive 表元数据的后台刷新失效。[#55215](https://github.com/StarRocks/starrocks/pull/55215)
+- CASE WHEN 返回类型错误导致的查询失败。[#59972](https://github.com/StarRocks/starrocks/pull/59972)
+- Delta Lake 表自 UNION 时的查询失败。[#60030](https://github.com/StarRocks/starrocks/pull/60030)
+- 同一事务内写入多表时分区创建失败。[#59954](https://github.com/StarRocks/starrocks/pull/59954)
+- 查询时可能会因为 Tablet 版本更新而导致返回为空而非报错。 [#53060](https://github.com/StarRocks/starrocks/pull/53060)
+- 升级至 v3.4 版本后，查询列被修改过的表返回为 Null。[#59941](https://github.com/StarRocks/starrocks/pull/59941)
+- 日志中打印认证敏感信息。[#59907](https://github.com/StarRocks/starrocks/pull/59907)
+- Hive Catalog 中的外表无法刷新元数据。[#54596](https://github.com/StarRocks/starrocks/pull/54596)
+- 经过 Schema Change 的表 CACHE SELECT 失败。[#59812](https://github.com/StarRocks/starrocks/pull/59812)
+- FE 切主时 Broker Laod 无法恢复。[#59732](https://github.com/StarRocks/starrocks/pull/59732)
+- 通过 Stream Load 导入时目标表表名包含中文时导入失败的问题。[#59722](https://github.com/StarRocks/starrocks/pull/59722)
+- 外部表查询中因搜索键哈希冲突导致结果错误的问题（适用于 Iceberg/Delta/Paimon）。[#59781](https://github.com/StarRocks/starrocks/pull/59781)
+
+## 3.3.15
+
+发布日期：2025 年 6 月 20 日
+
+### 问题修复
+
+修复了如下问题：
+
+- 统计信息插入语句中的字符串参数缺失引号。[#59713](https://github.com/StarRocks/starrocks/pull/59713)
+- 因 Rollup 任务导致的降级失败。[#59735](https://github.com/StarRocks/starrocks/pull/59735)
+- SHOW CREATE VIEW 返回值中函数参数错误。[#59714](https://github.com/StarRocks/starrocks/pull/59714)
+- 当 SQL 语句因为语法错误失败时，Audit Log 会打印语句中的敏感信息导致泄漏。[#59442](https://github.com/StarRocks/starrocks/pull/59442)
+- 报错 "Query version not found"。[#59194](https://github.com/StarRocks/starrocks/pull/59194)
+- 通过 ALTER TABLE 语句修改数据分布方式失败。[#59360](https://github.com/StarRocks/starrocks/pull/59360)
+- 当启用管理员保护时，系统仍然会展示 root 用户的进程列表。[#59435](https://github.com/StarRocks/starrocks/pull/59435)
+- 通过 INSERT OVERWRITE 写入 Hive 失败。[#59469](https://github.com/StarRocks/starrocks/pull/59469)
+- 日志中的 `max_tablet_rowset_num` 项目缺少 Tablet ID。[#59467](https://github.com/StarRocks/starrocks/pull/59467)
+- 因明细表错误设置了 Persistent Index 参数而导致的错误。[#56040](https://github.com/StarRocks/starrocks/pull/56040)
+- FE Follower 节点上的 TaskRun 历史被归档。[#59393](https://github.com/StarRocks/starrocks/pull/59393)
+- 外表物化视图刷新错误。[#59369](https://github.com/StarRocks/starrocks/pull/59369)
+- 存算分离集群中 Tablet 信息中没有最小版本。[#59373](https://github.com/StarRocks/starrocks/pull/59373)
+- 存算分离集群中的内表中因版本兼容逻辑错误导致最大列唯一 ID 异常。[#59190](https://github.com/StarRocks/starrocks/pull/59190)
+- 基于 Iceberg Catalog 的物化视图，当 Iceberg 表被删除重建的时候，物化视图无法有效刷新，且设置为 active 后也无法手动执行刷新。[#59287](https://github.com/StarRocks/starrocks/pull/59287)
+- 物化视图刷新 Task 的参数被污染。[#59052](https://github.com/StarRocks/starrocks/pull/59052)
+- 加载 Snpashot 失败时 Persistent Index 带来的数据丢失。[#59247](https://github.com/StarRocks/starrocks/pull/59247)
+- STRUCT 的子列出现在两个谓词中导致的问题。[#59216](https://github.com/StarRocks/starrocks/pull/59216)
+- 给列重命名后导致的查询失败。[#59178](https://github.com/StarRocks/starrocks/pull/59178)
+- 因收到多个 Stream Load 请求而导致导入失败。[#59181](https://github.com/StarRocks/starrocks/pull/59181)
+- Unified Catalog 中 Hive 表的物化视图无法实现分区级别刷新。[#59139](https://github.com/StarRocks/starrocks/pull/59139)
+- 错误的 UNION Plan 导致 FE OOM。[#59030](https://github.com/StarRocks/starrocks/pull/59030)
+- 导入数据时的版本丢失。[#59006](https://github.com/StarRocks/starrocks/pull/59006)
+- 查询被改写到同步物化视图时丢失谓词。[#58831](https://github.com/StarRocks/starrocks/pull/58831)
+- BITMAP/HLL/PERCENTILE 数据类型在窗口函数上的问题。[#58776](https://github.com/StarRocks/starrocks/pull/58776)
+- Hive Catalog 中的 External Table 的元数据变更无法刷新。[#54596](https://github.com/StarRocks/starrocks/pull/54596)
+
+### 行为变更
+
+- 通过 FE 配置项 `task_runs_max_history_number` 控制 `information schema.task_runs` 视图保存的历史 TaskRun 数量，从而降低内存开销。[#59161](https://github.com/StarRocks/starrocks/pull/59161)
+
 ## 3.3.14
 
 发布日期：2025 年 5 月 14 日

@@ -150,6 +150,7 @@ import com.starrocks.sql.analyzer.Field;
 import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.sql.analyzer.SetStmtAnalyzer;
 import com.starrocks.sql.ast.AddBackendBlackListStmt;
+import com.starrocks.sql.ast.AddComputeNodeBlackListStmt;
 import com.starrocks.sql.ast.AddSqlBlackListStmt;
 import com.starrocks.sql.ast.AdminSetConfigStmt;
 import com.starrocks.sql.ast.AnalyzeProfileStmt;
@@ -161,6 +162,7 @@ import com.starrocks.sql.ast.CreateTemporaryTableStmt;
 import com.starrocks.sql.ast.DdlStmt;
 import com.starrocks.sql.ast.DeallocateStmt;
 import com.starrocks.sql.ast.DelBackendBlackListStmt;
+import com.starrocks.sql.ast.DelComputeNodeBlackListStmt;
 import com.starrocks.sql.ast.DelSqlBlackListStmt;
 import com.starrocks.sql.ast.DeleteStmt;
 import com.starrocks.sql.ast.DmlStmt;
@@ -358,6 +360,8 @@ public class StmtExecutor {
         } else {
             summaryProfile.addInfoString(ProfileManager.SQL_STATEMENT, originStmt.originStmt);
         }
+        summaryProfile.addInfoString(ProfileManager.WAREHOUSE_CNGROUP, GlobalStateMgr.getCurrentState().getWarehouseMgr()
+                        .getWarehouseComputeResourceName(context.getCurrentComputeResource()));
 
         // Add some import variables in profile
         SessionVariable variables = context.getSessionVariable();
@@ -551,7 +555,9 @@ public class StmtExecutor {
             }
 
             // set warehouse for auditLog
-            context.getAuditEventBuilder().setWarehouse(context.getCurrentWarehouseName());
+            context.getAuditEventBuilder()
+                    .setWarehouse(context.getCurrentWarehouseName())
+                    .setCNGroup(context.getCurrentComputeResourceName());
             LOG.debug("set warehouse {} for stmt: {}", context.getCurrentWarehouseName(), parsedStmt);
 
             if (parsedStmt.isExplain()) {
@@ -638,7 +644,8 @@ public class StmtExecutor {
 
             // For follower: verify sql in BlackList before forward to leader
             // For leader: if this is a proxy sql, no need to verify sql in BlackList because every fe has its own blacklist
-            if ((parsedStmt instanceof QueryStatement || parsedStmt instanceof InsertStmt)
+            if ((parsedStmt instanceof QueryStatement || parsedStmt instanceof InsertStmt
+                    || parsedStmt instanceof CreateTableAsSelectStmt)
                     && Config.enable_sql_blacklist && !parsedStmt.isExplain() && !isProxy) {
                 OriginStatement origStmt = parsedStmt.getOrigStmt();
                 if (origStmt != null) {
@@ -708,6 +715,8 @@ public class StmtExecutor {
                                 // to this failed execution.
                                 String queryId = DebugUtil.printId(context.getExecutionId());
                                 ProfileManager.getInstance().removeProfile(queryId);
+                                // reset compute resource
+                                context.tryAcquireResource(true);
                             } else {
                                 // Release all resources after the query finish as soon as possible, as query profile is
                                 // asynchronous which can be delayed a long time.
@@ -804,6 +813,10 @@ public class StmtExecutor {
                 handleAddBackendBlackListStmt();
             } else if (parsedStmt instanceof DelBackendBlackListStmt) {
                 handleDelBackendBlackListStmt();
+            } else if (parsedStmt instanceof AddComputeNodeBlackListStmt) {
+                handleAddComputeNodeBlackListStmt();
+            } else if (parsedStmt instanceof DelComputeNodeBlackListStmt) {
+                handleDelComputeNodeBlackListStmt();
             } else if (parsedStmt instanceof PlanAdvisorStmt) {
                 handlePlanAdvisorStmt();
             } else if (parsedStmt instanceof TranslateStmt) {
@@ -888,6 +901,7 @@ public class StmtExecutor {
         context.getAuditEventBuilder().addScanRows(execStats.getScanRows() != null ? execStats.getScanRows() : 0);
         context.getAuditEventBuilder().addSpilledBytes(execStats.spillBytes != null ? execStats.spillBytes : 0);
         context.getAuditEventBuilder().setReturnRows(execStats.returnedRows == null ? 0 : execStats.returnedRows);
+        context.getAuditEventBuilder().addTransmittedBytes(execStats.transmittedBytes != null ? execStats.transmittedBytes : 0);
     }
 
     private void clearQueryScopeHintContext() {
@@ -1596,6 +1610,8 @@ public class StmtExecutor {
         statsConnectCtx.getSessionVariable().setStatisticCollectParallelism(
                 context.getSessionVariable().getStatisticCollectParallelism());
         statsConnectCtx.setStatisticsConnection(true);
+        // honor session variable for ANALYZE
+        statsConnectCtx.setCurrentWarehouse(context.getCurrentWarehouseName());
         try (var guard = statsConnectCtx.bindScope()) {
             executeAnalyze(statsConnectCtx, analyzeStmt, analyzeStatus, db, table);
         } finally {
@@ -1617,7 +1633,7 @@ public class StmtExecutor {
                                 StatsConstants.AnalyzeType.HISTOGRAM, StatsConstants.ScheduleType.ONCE,
                                 analyzeStmt.getProperties()),
                         analyzeStatus,
-                        false);
+                        false, false /* resetWarehouse */);
             } else {
                 StatsConstants.AnalyzeType analyzeType = analyzeStmt.isSample() ? StatsConstants.AnalyzeType.SAMPLE :
                         StatsConstants.AnalyzeType.FULL;
@@ -1630,7 +1646,7 @@ public class StmtExecutor {
                                 analyzeType,
                                 StatsConstants.ScheduleType.ONCE, analyzeStmt.getProperties()),
                         analyzeStatus,
-                        false);
+                        false, false /* resetWarehouse */);
             }
         } else {
             if (analyzeTypeDesc.isHistogram()) {
@@ -1640,7 +1656,7 @@ public class StmtExecutor {
                                 analyzeStmt.getProperties()),
                         analyzeStatus,
                         // Sync load cache, auto-populate column statistic cache after Analyze table manually
-                        false);
+                        false, false /* resetWarehouse */);
             } else {
                 StatsConstants.AnalyzeType analyzeType = analyzeStatus.getType();
                 statisticExecutor.collectStatistics(statsConnectCtx,
@@ -1651,10 +1667,11 @@ public class StmtExecutor {
                                 StatsConstants.ScheduleType.ONCE,
                                 analyzeStmt.getProperties(),
                                 analyzeTypeDesc.getStatsTypes(),
-                                analyzeStmt.getColumnNames() != null ? List.of(analyzeStmt.getColumnNames()) : null),
+                                analyzeStmt.getColumnNames() != null ? List.of(analyzeStmt.getColumnNames()) : null,
+                                true),
                         analyzeStatus,
                         // Sync load cache, auto-populate column statistic cache after Analyze table manually
-                        false);
+                        false, false /* resetWarehouse */);
             }
         }
     }
@@ -1798,11 +1815,39 @@ public class StmtExecutor {
         }
     }
 
-    private void handleDelBackendBlackListStmt() {
+    private void handleDelBackendBlackListStmt() throws StarRocksException {
         DelBackendBlackListStmt delBackendBlackListStmt = (DelBackendBlackListStmt) parsedStmt;
         Authorizer.check(delBackendBlackListStmt, context);
         for (Long backendId : delBackendBlackListStmt.getBackendIds()) {
+            SystemInfoService sis = GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo();
+            if (sis.getBackend(backendId) == null) {
+                throw new StarRocksException("Not found backend: " + backendId);
+            }
             SimpleScheduler.getHostBlacklist().remove(backendId);
+        }
+    }
+
+    private void handleAddComputeNodeBlackListStmt() throws StarRocksException {
+        AddComputeNodeBlackListStmt addComputeNodeBlackListStmt = (AddComputeNodeBlackListStmt) parsedStmt;
+        Authorizer.check(addComputeNodeBlackListStmt, context);
+        for (Long computeNodeId : addComputeNodeBlackListStmt.getComputeNodeIds()) {
+            SystemInfoService sis = GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo();
+            if (sis.getComputeNode(computeNodeId) == null) {
+                throw new StarRocksException("Not found compute node: " + computeNodeId);
+            }
+            SimpleScheduler.getHostBlacklist().addByManual(computeNodeId);
+        }
+    }
+
+    private void handleDelComputeNodeBlackListStmt() throws StarRocksException {
+        DelComputeNodeBlackListStmt delComputeNodeBlackListStmt = (DelComputeNodeBlackListStmt) parsedStmt;
+        Authorizer.check(delComputeNodeBlackListStmt, context);
+        for (Long computeNodeId : delComputeNodeBlackListStmt.getComputeNodeIds()) {
+            SystemInfoService sis = GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo();
+            if (sis.getComputeNode(computeNodeId) == null) {
+                throw new StarRocksException("Not found compute node: " + computeNodeId);
+            }
+            SimpleScheduler.getHostBlacklist().remove(computeNodeId);
         }
     }
 
