@@ -113,6 +113,8 @@ CONF_Int32(push_worker_count_high_priority, "3");
 
 // The count of thread to publish version per transaction
 CONF_mInt32(transaction_publish_version_worker_count, "0");
+// The idle time of transaction publish version thread pool, default 60 seconds.
+CONF_Int32(transaction_publish_version_thread_pool_idle_time_ms, "60000");
 // The min count of thread to publish version per transaction
 CONF_mInt32(transaction_publish_version_thread_pool_num_min, "0");
 
@@ -1557,10 +1559,15 @@ CONF_mInt32(olap_string_max_length, "1048576");
 // Skip get from pk index when light pk compaction publish is enabled
 CONF_mBool(enable_light_pk_compaction_publish, "true");
 
+// jit LRU object cache size for total 32 shards, it will be an auto value if it < 0
+// mem_limit = system memory or process memory limit if set.
+// if mem_limit < 16 GB, disable JIT.
+// else it  = min(mem_limit*0.01, 4MB);
+CONF_mInt64(jit_lru_object_cache_size, "0");
 // jit LRU cache size for total 32 shards, it will be an auto value if it <=0:
 // mem_limit = system memory or process memory limit if set.
 // if mem_limit < 16 GB, disable JIT.
-// else it = min(mem_limit*0.01, 1GB)
+// else it = min(mem_limit*0.01, 4MB)
 CONF_mInt64(jit_lru_cache_size, "0");
 
 CONF_mInt64(arrow_io_coalesce_read_max_buffer_size, "8388608");
@@ -1700,6 +1707,12 @@ CONF_mInt32(put_combined_txn_log_thread_pool_num_max, "64");
 CONF_mBool(enable_put_combinded_txn_log_parallel, "false");
 // used to control whether the metrics/ interface collects table metrics
 CONF_mBool(enable_collect_table_metrics, "true");
+// use to decide whether to enable the collection of table metrics
+CONF_Bool(enable_table_metrics, "false");
+// Used to limit the number of tables in table metrics.
+// the metrics/ interface returns metrics for at most max_table_metrics_num tables
+// to avoid including too much data in the response
+CONF_Int64(max_table_metrics_num, "100");
 // some internal parameters are used to control the execution strategy of join runtime filter pushdown.
 // Do not modify them unless necessary.
 CONF_mInt64(rf_sample_rows, "1024");

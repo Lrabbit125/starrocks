@@ -854,7 +854,7 @@ set(STARROCKS_LINK_LIBS
     Column
     Connector
     Exec
-    Exprs
+    -Wl,--whole-archive Exprs -Wl,--no-whole-archive
     FileSystem
     Formats
     Gutil
@@ -874,6 +874,7 @@ set(STARROCKS_LINK_LIBS
     TestUtil
     Tools
     Geo
+    Simd
     Cache
     ${WL_END_GROUP}
 )
@@ -1167,6 +1168,7 @@ add_subdirectory(${SRC_DIR}/storage)
 add_subdirectory(${SRC_DIR}/runtime)
 add_subdirectory(${SRC_DIR}/serde)
 add_subdirectory(${SRC_DIR}/service)
+add_subdirectory(${SRC_DIR}/simd)
 add_subdirectory(${SRC_DIR}/testutil)
 add_subdirectory(${SRC_DIR}/types)
 add_subdirectory(${SRC_DIR}/udf)

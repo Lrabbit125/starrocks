@@ -143,6 +143,7 @@ import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -166,12 +167,14 @@ public class MockedBackend {
     private static final AtomicInteger BASE_PORT = new AtomicInteger(8000);
     private static final long PATH_HASH = 123456;
 
+    private final int backendId;
     private final String host;
     private final int brpcPort;
     private final int heartBeatPort;
     private final int beThriftPort;
     private final int httpPort;
     private final int starletPort;
+
 
     final MockHeatBeatClient heatBeatClient;
 
@@ -181,11 +184,12 @@ public class MockedBackend {
 
     private final MockLakeService lakeService;
 
-    public MockedBackend(String host) {
-        this(host, BASE_PORT.getAndIncrement());
+    public MockedBackend(int backendId, String host) {
+        this(backendId, host, BASE_PORT.getAndIncrement());
     }
 
-    public MockedBackend(String host, int beThriftPort) {
+    public MockedBackend(int backendId, String host, int beThriftPort) {
+        this.backendId = backendId;
         this.host = host;
         this.beThriftPort = beThriftPort;
 
@@ -224,6 +228,10 @@ public class MockedBackend {
                 return backendService;
             }
         };
+    }
+
+    public int getBackendId() {
+        return backendId;
     }
 
     public String getHost() {
@@ -314,7 +322,7 @@ public class MockedBackend {
                         e.printStackTrace();
                     }
                 }
-            }).start();
+            }, "mock-be-thrift-client-" + backend.getBackendId()).start();
         }
 
         @Override
@@ -553,7 +561,11 @@ public class MockedBackend {
         }
     }
 
-    private static class MockLakeService implements LakeService {
+    public static class MockLakeService implements LakeService {
+
+        private final ConcurrentLinkedQueue<PublishLogVersionBatchRequest> publishLogVersionBatchRequests =
+                new ConcurrentLinkedQueue<>();
+
         @Override
         public Future<PublishVersionResponse> publishVersion(PublishVersionRequest request) {
             return CompletableFuture.completedFuture(null);
@@ -606,7 +618,12 @@ public class MockedBackend {
 
         @Override
         public Future<PublishLogVersionResponse> publishLogVersionBatch(PublishLogVersionBatchRequest request) {
+            publishLogVersionBatchRequests.add(request);
             return CompletableFuture.completedFuture(null);
+        }
+
+        public PublishLogVersionBatchRequest pollPublishLogVersionBatchRequests() {
+            return publishLogVersionBatchRequests.poll();
         }
 
         @Override

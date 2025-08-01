@@ -246,7 +246,7 @@ public class SlotRef extends Expr {
     }
 
     public boolean isFromLambda() {
-        return tblName != null && tblName.getTbl().equals(TableName.LAMBDA_FUNC_TABLE);
+        return tblName != null && tblName.getTbl().equalsIgnoreCase(TableName.LAMBDA_FUNC_TABLE);
     }
 
     public void setTblName(TableName name) {
@@ -270,10 +270,6 @@ public class SlotRef extends Expr {
 
     public SlotDescriptor getSlotDescriptorWithoutCheck() {
         return desc;
-    }
-
-    @Override
-    public void analyzeImpl(Analyzer analyzer) throws AnalysisException {
     }
 
     @Override

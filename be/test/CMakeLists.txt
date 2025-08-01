@@ -2,6 +2,7 @@ set(EXEC_FILES
         ./agent/agent_task_test.cpp
         ./agent/heartbeat_server_test.cpp
         ./agent/master_info_test.cpp
+        ./agent/resource_group_usage_recorder_test.cpp
         ./column/array_column_test.cpp
         ./column/column_view_test.cpp
         ./column/array_view_column_test.cpp
@@ -66,6 +67,7 @@ set(EXEC_FILES
         ./exec/pipeline/sink/export_sink_operator_test.cpp
         ./exec/pipeline/sink/table_function_table_sink_operator_test.cpp
         ./exec/pipeline/sink/memory_scratch_sink_operator_test.cpp
+        ./exec/pipeline/exchange_pass_through_test.cpp
         ./exec/pipeline/limit_operator_test.cpp
         ./exec/pipeline/mem_limited_chunk_queue_test.cpp
         ./exec/query_cache/query_cache_test.cpp
@@ -144,7 +146,7 @@ set(EXEC_FILES
         ./exprs/function_helper_test.cpp
         ./exprs/in_predicate_test.cpp
         ./exprs/is_null_predicate_test.cpp
-        ./exprs/jit_func_cache_test.cpp
+        ./exprs/jit_cache_test.cpp
         ./exprs/json_functions_test.cpp
         ./exprs/flat_json_functions_test.cpp
         ./exprs/lambda_array_expr_test.cpp
@@ -402,7 +404,6 @@ set(EXEC_FILES
         ./runtime/agg_state_desc_test.cpp
         ./runtime/arrow_result_writer_test.cpp
         ./runtime/buffer_control_block_test.cpp
-        ./runtime/data_stream_mgr_test.cpp
         ./runtime/datetime_value_test.cpp
         ./runtime/decimalv2_value_test.cpp
         ./runtime/decimalv3_test.cpp
@@ -453,6 +454,7 @@ set(EXEC_FILES
         ./simd/simd_test.cpp
         ./simd/simd_selector_test.cpp
         ./simd/simd_mulselector_test.cpp
+        ./simd/simd_expand_test.cpp
         ./util/phmap_test.cpp
         ./util/aes_util_test.cpp
         ./util/await_test.cpp
@@ -551,7 +553,7 @@ set(EXEC_FILES
         ./storage/lake/tablet_retain_info_test.cpp
         ./storage/record_predicate/column_hash_is_congruent_test.cpp
         ./storage/record_predicate/record_predicate_helper_test.cpp
-        ./storage/lake/sstable_predicate_test.cpp
+        ./storage/sstable/sstable_predicate_test.cpp
         ./cache/datacache_utils_test.cpp
         ./cache/block_cache/block_cache_hit_rate_counter_test.cpp
         ./cache/peer_cache_test.cpp
@@ -559,6 +561,7 @@ set(EXEC_FILES
         ./util/thrift_client_test.cpp
         ./udf/java/java_native_method_test.cpp
         ./udf/java/java_data_converter_test.cpp
+        ./util/table_metrics_mgr_test.cpp
         )
 
 if (${USE_AVX512})
@@ -584,7 +587,7 @@ if (USE_AVX2)
 endif ()
 
 add_library(starrocks_test_objs OBJECT ${EXEC_FILES})
-SET_TARGET_PROPERTIES(starrocks_test_objs PROPERTIES COMPILE_FLAGS "-fno-access-control -g1")
+SET_TARGET_PROPERTIES(starrocks_test_objs PROPERTIES COMPILE_FLAGS "-fno-access-control")
 add_executable(starrocks_test test_main.cpp $<TARGET_OBJECTS:starrocks_test_objs>)
 
 TARGET_LINK_LIBRARIES(starrocks_test ${TEST_LINK_LIBS})
@@ -596,3 +599,6 @@ ADD_BE_TEST(storage/lake/compaction_task_test)
 
 # you can simply add test case as single binary without adding `main`
 # ADD_BE_TEST(exec/sorting_test)
+
+# Standalone executable for builtin_functions_fuzzy_test
+ADD_BE_TEST(fuzzy/builtin_functions_fuzzy_test)

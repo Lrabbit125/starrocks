@@ -33,7 +33,6 @@ import com.starrocks.common.util.Daemon;
 import com.starrocks.common.util.concurrent.lock.LockType;
 import com.starrocks.common.util.concurrent.lock.Locker;
 import com.starrocks.lake.LakeAggregator;
-import com.starrocks.lake.LakeTablet;
 import com.starrocks.proto.AggregateCompactRequest;
 import com.starrocks.proto.CompactRequest;
 import com.starrocks.proto.ComputeNodePB;
@@ -353,7 +352,7 @@ public class CompactionScheduler extends Daemon {
         try {
             if (table.isFileBundling()) {
                 CompactionTask task = createAggregateCompactionTask(currentVersion, beToTablets, txnId,
-                        partitionStatisticsSnapshot.getPriority(), info.computeResource);
+                        partitionStatisticsSnapshot.getPriority(), info.computeResource, partition.getId());
                 task.sendRequest();
                 job.setAggregateTask(task);
                 LOG.debug("Create aggregate compaction task. {}", job.getDebugString());
@@ -409,12 +408,13 @@ public class CompactionScheduler extends Daemon {
 
     @NotNull
     private CompactionTask createAggregateCompactionTask(long currentVersion, Map<Long, List<Long>> beToTablets, long txnId,
-            PartitionStatistics.CompactionPriority priority, ComputeResource computeResource)
+            PartitionStatistics.CompactionPriority priority, ComputeResource computeResource, long partitionId)
             throws StarRocksException, RpcException {
         // 1. build AggregateCompactRequest
         AggregateCompactRequest aggRequest = new AggregateCompactRequest();
         aggRequest.requests = Lists.newArrayList();
         aggRequest.computeNodes = Lists.newArrayList();
+        aggRequest.partitionId = partitionId;
 
         for (Map.Entry<Long, List<Long>> entry : beToTablets.entrySet()) {
             ComputeNode node = systemInfoService.getBackendOrComputeNode(entry.getKey());
@@ -454,14 +454,14 @@ public class CompactionScheduler extends Daemon {
     }
 
     @NotNull
-    private Map<Long, List<Long>> collectPartitionTablets(PhysicalPartition partition, ComputeResource computeResource) {
+    protected Map<Long, List<Long>> collectPartitionTablets(PhysicalPartition partition, ComputeResource computeResource) {
         List<MaterializedIndex> visibleIndexes = partition.getMaterializedIndices(MaterializedIndex.IndexExtState.VISIBLE);
         Map<Long, List<Long>> beToTablets = new HashMap<>();
 
         final WarehouseManager warehouseManager = GlobalStateMgr.getCurrentState().getWarehouseMgr();
         for (MaterializedIndex index : visibleIndexes) {
             for (Tablet tablet : index.getTablets()) {
-                ComputeNode computeNode = warehouseManager.getComputeNodeAssignedToTablet(computeResource, (LakeTablet) tablet);
+                ComputeNode computeNode = warehouseManager.getComputeNodeAssignedToTablet(computeResource, tablet.getId());
                 if (computeNode == null) {
                     beToTablets.clear();
                     return beToTablets;

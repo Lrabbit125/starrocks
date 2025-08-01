@@ -4,6 +4,44 @@ displayed_sidebar: docs
 
 # StarRocks version 3.5
 
+:::warning
+
+After upgrading StarRocks to v3.5, DO NOT downgrade it directly to v3.4.0 ～ v3.4.4, otherwise it will cause metadata incompatibility. You must downgrade the cluster to v3.4.5 or later to prevent the issue.
+
+:::
+
+## v3.5.2
+
+Release Date: July 18, 2025
+
+### Improvements
+
+- Collected NDV (number of distinct values) statistics for ARRAY columns to improve query plan accuracy. [#60623](https://github.com/StarRocks/starrocks/pull/60623)
+- Disabled replica balancing for Colocate tables and tablet scheduling in Shared-data clusters to reduce unnecessary log output. [#60737](https://github.com/StarRocks/starrocks/pull/60737)
+- Optimized Catalog access workflow: FE now delays accessing external data sources asynchronously at startup to prevent hanging due to external service unavailability. [#60614](https://github.com/StarRocks/starrocks/pull/60614)
+- Added session variable `enable_predicate_expr_reuse` to control predicate pushdown. [#60603](https://github.com/StarRocks/starrocks/pull/60603)
+- Supports a retry mechanism when fetching Kafka partition information fails. [#60513](https://github.com/StarRocks/starrocks/pull/60513)
+- Removed the restriction requiring exact mapping of partition columns between materialized views and base tables. [#60565](https://github.com/StarRocks/starrocks/pull/60565)
+- Supports building Runtime In-Filters to enhance aggregation performance by filtering data during aggregation. [#59288](https://github.com/StarRocks/starrocks/pull/59288)
+
+### Bug Fixes
+
+Fixed the following issues:
+
+- COUNT DISTINCT queries crash due to low-cardinality optimization for multiple columns. [#60664](https://github.com/StarRocks/starrocks/pull/60664)
+- Incorrect matching of global UDFs when multiple functions share the same name. [#60550](https://github.com/StarRocks/starrocks/pull/60550)
+- Null pointer exception (NPE) issue during Stream Load import. [#60755](https://github.com/StarRocks/starrocks/pull/60755)
+- Null pointer exception (NPE) issue when starting FE during a recovery from a cluster snapshot. [#60604](https://github.com/StarRocks/starrocks/pull/60604)
+- BE crash caused by column mode mismatch when processing short-circuit queries with out-of-order values. [#60466](https://github.com/StarRocks/starrocks/pull/60466)
+- Session variables set via PROPERTIES in SUBMIT TASK statements did not take effect. [#60584](https://github.com/StarRocks/starrocks/pull/60584)
+- Incorrect results for `SELECT min/max` queries under specific conditions. [#60601](https://github.com/StarRocks/starrocks/pull/60601)
+- Incorrect bucket pruning when the left side of a predicate is a function, leading to incorrect query results. [#60467](https://github.com/StarRocks/starrocks/pull/60467)
+- Crash for queries against a non-existent `query_id` via Arrow Flight SQL. [#60497](https://github.com/StarRocks/starrocks/pull/60497)
+
+### Behavior Changes
+
+- The default value of `lake_compaction_allow_partial_success` is set to `true`. Compaction operations can now be marked as successful even if partially completed, preventing blockage of subsequent compaction tasks. [#60643](https://github.com/StarRocks/starrocks/pull/60643)
+
 ## v3.5.1
 
 Release Date: July 1, 2025
@@ -54,6 +92,7 @@ Release Date: June 13, 2025
 - JDK 17 or later is required from StarRocks v3.5.0 onwards.
   - To upgrade a cluster from v3.4 or earlier, you must upgrade the version of JDK that StarRocks depends, and remove the options that are incompatible with JDK 17 in the configuration item `JAVA_OPTS` in the FE configuration file **fe.conf**, for example, options that involve CMS and GC. The default value of `JAVA_OPTS` in the v3.5 configuration file is recommended.
   - For clusters using external catalogs, you need to add `--add-opens=java.base/java.util=ALL-UNNAMED` to the `JAVA_OPTS` configuration item in the BE configuration file **be.conf**.
+  - For clusters using Java UDFs, you need to add `--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED` to the `JAVA_OPTS` configuration item in the BE configuration file **be.conf**.
   - In addition, as of v3.5.0, StarRocks no longer provides JVM configurations for specific JDK versions. All versions of JDK use `JAVA_OPTS`.
 
 ### Shared-data Enhancement
